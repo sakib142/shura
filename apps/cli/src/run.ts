@@ -9,6 +9,7 @@
  * the separation of duties is real, not asserted in a prompt.
  */
 
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createPool, databaseUrl, isReachable } from '@forge/db';
 import { GitHubMergeQueue, GitHubVcs, JiraTracker, initRepo } from '@forge/connectors';
@@ -98,7 +99,11 @@ export async function run(args: string[]): Promise<number> {
 
   const key = args.find((a) => !a.startsWith('--') && !isFlagValue(args, a));
   if (key === undefined) {
-    console.error('usage: forge run <ITEM> [--role backend-developer] [--reviewer code-reviewer] [--reset]');
+    console.error(
+      'usage: forge run <ITEM> [--role R] [--reviewer R] [--reset] [--reseed]\n' +
+        '  --reset   clear run records; the repository is untouched\n' +
+        '  --reseed  rebuild the local repository from the fixture, discarding merged work',
+    );
     return 2;
   }
 
@@ -143,8 +148,9 @@ export async function run(args: string[]): Promise<number> {
   }
 
   if (args.includes('--reset')) {
+    // Run records only. The repository is left alone — use --reseed for that.
     await pool.query('TRUNCATE merge_queue, change_requests, verdicts, artifacts, tasks CASCADE');
-    console.log('reset: cleared prior runs');
+    console.log('reset: cleared run records (the repository is untouched)');
   }
 
   // A Jira-backed project reads the story from Jira and mirrors it locally, so
@@ -227,8 +233,17 @@ export async function run(args: string[]): Promise<number> {
     repoDir = await vcs.repoDir();
   } else {
     repoDir = join(loaded.dir, '.forge', `${config.project}.git`);
-    console.log(`seeding ${config.project} from ${config.repo.path}`);
-    await initRepo(repoDir, resolveFrom(loaded, config.repo.path));
+
+    // Seed only when there is nothing there, or when asked to start over.
+    // Re-seeding on every run deletes whatever the previous run merged, which
+    // made three tickets read Done against work that no longer existed.
+    const fresh = !existsSync(repoDir);
+    if (fresh || args.includes('--reseed')) {
+      console.log(`seeding ${config.project} from ${config.repo.path}`);
+      await initRepo(repoDir, resolveFrom(loaded, config.repo.path));
+    } else {
+      console.log(`using the existing ${config.project} repository`);
+    }
   }
 
   console.log(
