@@ -27,6 +27,9 @@
     },
     {
       "path": "./apps/cli"
+    },
+    {
+      "path": "./packages/sandbox"
     }
   ]
 }

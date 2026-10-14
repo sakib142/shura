@@ -144,6 +144,22 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)
 
+  packages/sandbox:
+    dependencies:
+      '@forge/core':
+        specifier: workspace:*
+        version: link:../core
+      '@forge/git':
+        specifier: workspace:*
+        version: link:../git
+      '@forge/ports':
+        specifier: workspace:*
+        version: link:../ports
+    devDependencies:
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)
+
   packages/tool-gateway:
     dependencies:
       '@forge/core':
