@@ -10,7 +10,8 @@
     "@forge/core": "workspace:*",
     "@forge/db": "workspace:*",
     "@forge/roles": "workspace:*",
-    "@forge/git": "workspace:*"
+    "@forge/git": "workspace:*",
+    "@forge/model-gateway": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2"

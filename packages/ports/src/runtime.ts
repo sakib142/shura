@@ -1,4 +1,5 @@
 import type { RoleDefinition, Vendor } from '@forge/core';
+import type { ToolCallResult } from './gateway.js';
 
 /** What an agent streams back while it works. */
 export type AgentEvent =
@@ -29,14 +30,25 @@ export interface RunLimits {
   readonly maxUsd: number;
 }
 
+/**
+ * How an adapter executes a tool.
+ *
+ * Every call goes through this and nowhere else, so an adapter cannot reach a
+ * tool without passing the gateway's permission check, schema validation,
+ * idempotency claim and audit write. Adapters therefore never see the gateway,
+ * credentials, or the task identity — the worker binds those before handing
+ * this down.
+ */
+export type ToolInvoker = (tool: string, args: unknown) => Promise<ToolCallResult>;
+
 export interface RunRequest {
   readonly role: RoleDefinition;
   readonly context: TaskContext;
-  /** Resolved by the tool gateway from the role, never read from the role file
-   *  directly — the gateway is the only thing that may decide what is granted. */
+  /** Grant names, resolved by the tool gateway — never read from the role file. */
   readonly tools: readonly string[];
   readonly limits: RunLimits;
   readonly signal: AbortSignal;
+  readonly invoke: ToolInvoker;
 }
 
 /**

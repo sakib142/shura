@@ -10,6 +10,7 @@
 import { VENDORS, assertCatalogComplete, type Vendor } from '@forge/core';
 import { createPool, databaseUrl, isReachable, verifyAuditChain } from '@forge/db';
 import { tryResolveGit } from '@forge/git';
+import { hasPricing } from '@forge/model-gateway';
 import { loadAllRoles } from '@forge/roles';
 
 const KEY_ENV: Record<Vendor, string> = {
@@ -61,6 +62,20 @@ async function doctor(): Promise<number> {
       : ok(`git: ${git.version} at ${git.path} (via ${git.source})`),
   );
   if (git === undefined) fatal = true;
+
+  try {
+    const roles = loadAllRoles();
+    const unpriced = [...roles.values()]
+      .map((r) => r.model?.model)
+      .filter((m): m is string => m !== undefined && !hasPricing(m));
+    lines.push(
+      unpriced.length === 0
+        ? ok('pricing: every configured model has a published price')
+        : no(`pricing: no price for ${[...new Set(unpriced)].join(', ')} — cost will report as unknown`),
+    );
+  } catch {
+    // role loading already reported above
+  }
 
   const present = VENDORS.filter((v) => (process.env[KEY_ENV[v]] ?? '') !== '');
   for (const v of VENDORS) {

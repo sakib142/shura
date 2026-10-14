@@ -3,7 +3,7 @@ kind: produce
 model:
   runtime: anthropic
   model: claude-sonnet-5
-  fallback: google/gemini-2.5-pro
+  fallback: google/gemini-3.8-flash
 tools: [repo.read, repo.write, test.run, tracker.comment, claims.claim]
 limits: { max_minutes: 90, max_tokens: 2000000, max_usd: 8.00 }
 instructions: prompts/backend-developer.md

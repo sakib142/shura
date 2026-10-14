@@ -5,6 +5,9 @@
       "path": "./packages/git"
     },
     {
+      "path": "./packages/model-gateway"
+    },
+    {
       "path": "./packages/core"
     },
     {

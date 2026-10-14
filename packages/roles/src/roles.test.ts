@@ -63,3 +63,35 @@ describe('the shipped role definitions', () => {
     }
   });
 });
+
+describe('model identifiers', () => {
+  // Model IDs rot. gpt-5 and gemini-2.5-pro were both configured here and both
+  // had been retired; claude-sonnet-5-5 in the architecture doc never existed.
+  // This test does not prove an ID is live, but it does stop a typo and forces
+  // a conscious edit whenever one changes.
+  const KNOWN: Record<string, readonly string[]> = {
+    anthropic: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'],
+    openai: ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-luna'],
+    google: ['gemini-3.8-flash', 'gemini-4-argon'],
+    local: [],
+  };
+
+  it('uses only model IDs checked against vendor documentation', () => {
+    for (const role of roles.values()) {
+      const m = role.model;
+      if (m === undefined) continue;
+      if (m.runtime === 'local') continue;
+      expect(KNOWN[m.runtime], `${role.id} runtime`).toContain(m.model);
+    }
+  });
+
+  it('keeps every fallback on a vendor different from the primary', () => {
+    for (const role of roles.values()) {
+      const fallback = role.model?.fallback;
+      if (fallback === undefined) continue;
+      const [vendor, model] = fallback.split('/');
+      expect(vendor, `${role.id} fallback vendor`).not.toBe(role.model?.runtime);
+      expect(KNOWN[vendor ?? ''], `${role.id} fallback`).toContain(model);
+    }
+  });
+});

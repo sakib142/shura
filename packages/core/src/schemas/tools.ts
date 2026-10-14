@@ -11,6 +11,7 @@
  */
 
 import { z } from 'zod';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 import { digest, stableStringify } from '../hash.js';
 import type { ToolEffect } from '../vocabulary.js';
 
@@ -22,6 +23,14 @@ export interface EffectContext {
 
 export interface ToolSpec {
   readonly effect: ToolEffect;
+  /**
+   * What the tool does, when to use it, and — critically — the constraints the
+   * JSON Schema cannot express. `.refine()` rules are runtime-only, so a model
+   * sent the schema alone would never learn that ".." is rejected. Tool
+   * descriptions are the primary mechanism a model uses to choose between
+   * similar tools, so these are written for the model, not for us.
+   */
+  readonly description: string;
   readonly args: z.ZodTypeAny;
   /** Write tools only: how two calls are judged to be the same effect. */
   readonly effectKey?: (args: never, ctx: EffectContext) => string;
@@ -57,10 +66,14 @@ const BranchName = z.string().min(1).max(255).regex(/^[A-Za-z0-9._\-/]+$/);
 export const TOOL_CATALOG = {
   'repo.read': {
     effect: 'read',
+    description:
+      'Read one file from the checked-out repository. Paths are repo-relative ("src/orders/list.ts"), never absolute and never containing ".." — a path that leaves the workspace is rejected. Use this to inspect code; use test.run to find out whether it works.',
     args: z.object({ path: RepoPath }),
   },
   'repo.write': {
     effect: 'write',
+    description:
+      'Create or overwrite one file in the checked-out repository, replacing its entire contents. Paths are repo-relative, never absolute, never containing "..", and never inside .git. Writing the same path twice in one attempt is collapsed into a single effect, so re-writing identical content is a no-op rather than an error.',
     args: z.object({ path: RepoPath, content: z.string() }),
     // Attempt is in the key: rework must be able to rewrite the same file.
     effectKey: (a: { path: string }, c) => `repo.write:${c.taskId}:${c.attempt}:${a.path}`,
@@ -68,6 +81,8 @@ export const TOOL_CATALOG = {
   },
   'repo.merge': {
     effect: 'write',
+    description:
+      'Merge an approved change request. Reserved for the merge queue; no producing or verifying role holds this grant. One verdict merges exactly once however often this is called.',
     args: z.object({ changeRequestId: z.string().min(1), verdictId: z.string().min(1) }),
     // No task, no attempt: one approved verdict merges once, across every retry.
     effectKey: (a: { changeRequestId: string; verdictId: string }) =>
@@ -76,14 +91,20 @@ export const TOOL_CATALOG = {
   },
   'test.run': {
     effect: 'execute',
+    description:
+      'Run the test suite in the checked-out repository and return the result. Optionally filter to a subset by name. This executes code but changes nothing, so it is safe to call repeatedly; call it before claiming a criterion is met.',
     args: z.object({ filter: z.string().max(256).optional() }),
   },
   'tracker.read': {
     effect: 'read',
+    description:
+      'Read one work item by key (for example "ORD-12"), returning its title, state and acceptance criteria. Use this to recover the criteria you are being judged against; use tracker.comment to report progress.',
     args: z.object({ workItemKey: WorkItemKey }),
   },
   'tracker.write': {
     effect: 'write',
+    description:
+      'Update fields on one work item. Changes what humans see in the tracker, so prefer tracker.comment for progress notes and reserve this for actual state changes.',
     args: z.object({ workItemKey: WorkItemKey, fields: z.record(z.string(), z.unknown()) }),
     effectKey: (a: { workItemKey: string }, c) =>
       `tracker.write:${c.taskId}:${c.attempt}:${a.workItemKey}`,
@@ -91,6 +112,8 @@ export const TOOL_CATALOG = {
   },
   'tracker.comment': {
     effect: 'write',
+    description:
+      'Post one progress note on a work item, visible to humans. Keep it to what changed and what is left. Posting the identical body twice within an attempt is collapsed into a single comment, so a retry cannot spam the ticket.',
     args: z.object({ workItemKey: WorkItemKey, body: z.string().min(1).max(10_000) }),
     // A requeued task must not re-post the same note.
     effectKey: (a: { workItemKey: string; body: string }, c) =>
@@ -99,10 +122,14 @@ export const TOOL_CATALOG = {
   },
   'docs.read': {
     effect: 'read',
+    description:
+      'Read one documentation or specification file, repo-relative. Use this for the API contract, repo rules and design briefs; use repo.read for source code.',
     args: z.object({ path: RepoPath }),
   },
   'claims.claim': {
     effect: 'write',
+    description:
+      'Claim a branch and a set of file globs before writing anything, so no two agents edit the same files. Fails if the globs overlap a claim another agent already holds. Claim first, then write.',
     args: z.object({ branch: BranchName, fileGlobs: z.array(z.string().min(1)).min(1) }),
     // No attempt: reclaiming the same branch for the same task is one claim.
     effectKey: (a: { branch: string }, c) => `claims.claim:${c.taskId}:${a.branch}`,
@@ -110,6 +137,8 @@ export const TOOL_CATALOG = {
   },
   'verdict.submit': {
     effect: 'write',
+    description:
+      'Submit the verdict for the artifact under review. This is the only way a verifying role can write anything, and the only way to record a judgment. Every acceptance criterion must be addressed; a criterion marked not_met must carry a finding naming the file, the problem and the evidence. The decision is recomputed from the findings, so declaring PASS while reporting a blocker will be overridden.',
     // Validated in full by acceptVerdict; this is the envelope check.
     args: z.object({ artifactId: z.string().min(1) }).passthrough(),
     effectKey: (a: { artifactId: string }, c) => `verdict.submit:${a.artifactId}:${c.taskId}`,
@@ -186,3 +215,40 @@ export function assertCatalogComplete(): void {
 }
 
 export { stableStringify };
+
+/* ------------------------------------------------- vendor-facing schemas */
+
+/**
+ * The JSON Schema a model is shown for one tool.
+ *
+ * Note what is lost in translation: zod `.refine()` rules are runtime-only, so
+ * the no-".." and no-".git" constraints on repo paths do not survive into JSON
+ * Schema. That is deliberate and safe — the gateway enforces them regardless —
+ * but it is why every tool carries a description stating them in words. The
+ * schema is a hint to the model; the gateway is the enforcement.
+ */
+export function toolJsonSchema(tool: ToolName): Record<string, unknown> {
+  const schema = zodToJsonSchema(CATALOG[tool].args, {
+    target: 'jsonSchema7',
+    $refStrategy: 'none',
+  }) as Record<string, unknown>;
+
+  // Strict modes across vendors reject unspecified properties, and OpenAI
+  // requires this explicitly rather than inferring it.
+  return { ...schema, additionalProperties: false };
+}
+
+export interface VendorToolDefinition {
+  readonly name: ToolName;
+  readonly description: string;
+  readonly parameters: Record<string, unknown>;
+}
+
+/** The tool definitions for one role's grants, in a vendor-neutral shape. */
+export function toolDefinitions(grants: readonly string[]): VendorToolDefinition[] {
+  return grants.filter(isKnownTool).map((name) => ({
+    name,
+    description: CATALOG[name].description,
+    parameters: toolJsonSchema(name),
+  }));
+}

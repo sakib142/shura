@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { VENDORS, isKnownTool } from '@forge/core';
-import type { AgentEvent, AgentRuntime, RunRequest, RunLimits } from '@forge/ports';
+import type { AgentEvent, AgentRuntime, RunRequest, RunLimits, ToolInvoker } from '@forge/ports';
 import type { RoleDefinition } from '@forge/core';
 
 export const CONTRACT_ROLE: RoleDefinition = {
@@ -36,9 +36,13 @@ export function contractRequest(over: Partial<RunRequest> = {}): RunRequest {
     tools: ['repo.read', 'repo.write', 'test.run'],
     limits,
     signal: new AbortController().signal,
+    invoke: allowAll,
     ...over,
   };
 }
+
+/** A permissive invoker for contract fixtures. Real runs go through the gateway. */
+export const allowAll: ToolInvoker = async () => ({ allowed: true, output: { ok: true } });
 
 export async function drain(runtime: AgentRuntime, req: RunRequest): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];
