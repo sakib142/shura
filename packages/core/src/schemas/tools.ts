@@ -238,17 +238,45 @@ export function toolJsonSchema(tool: ToolName): Record<string, unknown> {
   return { ...schema, additionalProperties: false };
 }
 
+/**
+ * Vendors constrain tool names to `^[a-zA-Z0-9_-]+$` — no dots. Our names use a
+ * dot as a namespace separator (`repo.read`), which reads better in grants,
+ * effect keys and audit rows, so the dot is translated at the vendor boundary
+ * rather than given up everywhere else.
+ *
+ * Found by a smoke test: both Anthropic and OpenAI reject `repo.read` with a
+ * 400, and no amount of testing against scripted vendors would have shown it.
+ */
+export const VENDOR_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+export function vendorToolName(tool: ToolName): string {
+  return tool.replace(/\./g, '_');
+}
+
+/** The inverse. Returns undefined for a name no tool maps to. */
+export function internalToolName(vendorName: string): ToolName | undefined {
+  if (isKnownTool(vendorName)) return vendorName;
+  for (const name of Object.keys(CATALOG) as ToolName[]) {
+    if (vendorToolName(name) === vendorName) return name;
+  }
+  return undefined;
+}
+
 export interface VendorToolDefinition {
-  readonly name: ToolName;
+  /** Our name, with the dot. Use this for grants, keys and audit. */
+  readonly id: ToolName;
+  /** The name the vendor is given, dot-free. */
+  readonly name: string;
   readonly description: string;
   readonly parameters: Record<string, unknown>;
 }
 
 /** The tool definitions for one role's grants, in a vendor-neutral shape. */
 export function toolDefinitions(grants: readonly string[]): VendorToolDefinition[] {
-  return grants.filter(isKnownTool).map((name) => ({
-    name,
-    description: CATALOG[name].description,
-    parameters: toolJsonSchema(name),
+  return grants.filter(isKnownTool).map((id) => ({
+    id,
+    name: vendorToolName(id),
+    description: CATALOG[id].description,
+    parameters: toolJsonSchema(id),
   }));
 }

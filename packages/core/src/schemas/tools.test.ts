@@ -6,8 +6,12 @@ import {
   assertCatalogComplete,
   deriveEffectKey,
   isReclaimable,
+  toolDefinitions,
   toolEffect,
   validateToolArgs,
+  internalToolName,
+  vendorToolName,
+  VENDOR_NAME_PATTERN,
   type ToolName,
 } from './tools.js';
 
@@ -123,5 +127,44 @@ describe('effects', () => {
     expect(toolEffect('test.run')).toBe('execute');
     expect(toolEffect('repo.read')).toBe('read');
     expect(toolEffect('repo.merge')).toBe('write');
+  });
+});
+
+describe('vendor tool names', () => {
+  // Found the hard way: Anthropic and OpenAI both 400 on a dot in a tool name.
+  // Unit tests against scripted vendors passed happily; a real call did not.
+  it('gives every tool a name the vendors will accept', () => {
+    for (const name of Object.keys(TOOL_CATALOG) as ToolName[]) {
+      expect(vendorToolName(name), name).toMatch(VENDOR_NAME_PATTERN);
+    }
+  });
+
+  it('round-trips every tool name through the vendor form', () => {
+    for (const name of Object.keys(TOOL_CATALOG) as ToolName[]) {
+      expect(internalToolName(vendorToolName(name))).toBe(name);
+    }
+  });
+
+  it('maps the dot to an underscore and back', () => {
+    expect(vendorToolName('repo.read')).toBe('repo_read');
+    expect(internalToolName('repo_read')).toBe('repo.read');
+  });
+
+  it('still accepts an internal name handed back unchanged', () => {
+    expect(internalToolName('repo.read')).toBe('repo.read');
+  });
+
+  it('returns undefined for a name no tool maps to', () => {
+    expect(internalToolName('repo_sudo')).toBeUndefined();
+  });
+
+  it('keeps vendor names unique, so the inverse is unambiguous', () => {
+    const names = (Object.keys(TOOL_CATALOG) as ToolName[]).map(vendorToolName);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('hands the vendor the safe name while keeping ours alongside', () => {
+    const [def] = toolDefinitions(['repo.read']);
+    expect(def).toMatchObject({ id: 'repo.read', name: 'repo_read' });
   });
 });

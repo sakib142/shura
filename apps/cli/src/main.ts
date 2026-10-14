@@ -12,6 +12,7 @@ import { createPool, databaseUrl, isReachable, verifyAuditChain } from '@forge/d
 import { tryResolveGit } from '@forge/git';
 import { hasPricing } from '@forge/model-gateway';
 import { loadAllRoles } from '@forge/roles';
+import { smoke } from './smoke.js';
 
 const KEY_ENV: Record<Vendor, string> = {
   anthropic: 'ANTHROPIC_API_KEY',
@@ -122,5 +123,7 @@ const exit = await (command === 'doctor'
   ? doctor()
   : command === 'audit'
     ? audit(rest)
-    : (console.error('usage: forge <doctor|audit --verify>'), Promise.resolve(2)));
+    : command === 'smoke'
+      ? smoke(rest[0])
+      : (console.error('usage: forge <doctor|audit --verify|smoke [vendor]>'), Promise.resolve(2)));
 process.exit(exit);

@@ -22,6 +22,12 @@
     },
     {
       "path": "../../packages/model-gateway"
+    },
+    {
+      "path": "../../packages/runtimes"
+    },
+    {
+      "path": "../../packages/ports"
     }
   ]
 }

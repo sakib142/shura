@@ -35,9 +35,15 @@ importers:
       '@forge/model-gateway':
         specifier: workspace:*
         version: link:../../packages/model-gateway
+      '@forge/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
       '@forge/roles':
         specifier: workspace:*
         version: link:../../packages/roles
+      '@forge/runtimes':
+        specifier: workspace:*
+        version: link:../../packages/runtimes
     devDependencies:
       tsx:
         specifier: ^4.19.2

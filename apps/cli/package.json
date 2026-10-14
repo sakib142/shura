@@ -11,7 +11,9 @@
     "@forge/db": "workspace:*",
     "@forge/roles": "workspace:*",
     "@forge/git": "workspace:*",
-    "@forge/model-gateway": "workspace:*"
+    "@forge/model-gateway": "workspace:*",
+    "@forge/runtimes": "workspace:*",
+    "@forge/ports": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2"

@@ -15,7 +15,7 @@
 
 import type { AgentEvent, RunRequest, ToolInvoker } from '@forge/ports';
 import { costOf } from '@forge/model-gateway';
-import type { Vendor } from '@forge/core';
+import { internalToolName, type Vendor } from '@forge/core';
 
 export interface VendorToolCall {
   readonly id: string;
@@ -139,7 +139,12 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncIterable<AgentEvent
     }
 
     const results: VendorToolResult[] = [];
-    for (const call of turn.toolCalls) {
+    for (const raw of turn.toolCalls) {
+      // Vendors see dot-free names; everything inside uses ours. Translating
+      // here means one place handles it rather than four adapters each
+      // remembering to.
+      const internal = internalToolName(raw.name);
+      const call = internal === undefined ? raw : { ...raw, name: internal };
       if (req.signal.aborted) {
         yield { t: 'error', message: `aborted: ${abortReason(req.signal)}` };
         return;
