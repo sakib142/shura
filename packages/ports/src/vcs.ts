@@ -30,9 +30,21 @@ export interface Vcs {
     base: string;
     title: string;
     body: string;
+    /** Which agent produced it. Recorded locally; GitHub attributes to the token. */
+    author?: string;
+    workItemId?: string;
   }): Promise<ChangeRequestRef>;
   getDiff(ref: ChangeRequestRef): Promise<Diff>;
   runChecks(ref: ChangeRequestRef): Promise<CheckRun>;
+  /**
+   * Makes a branch's commits visible wherever change requests are opened.
+   *
+   * Free for a local repository, where a worktree already shares refs with the
+   * repo it came from. A push for a remote one. The loop has to say this
+   * explicitly, because otherwise the local case works and the remote case
+   * opens a pull request with nothing in it.
+   */
+  publishBranch(branch: string): Promise<void>;
 }
 
 export type MergeOutcome =

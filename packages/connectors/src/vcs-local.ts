@@ -78,6 +78,9 @@ export class LocalVcs implements Vcs {
     return { id: row.id, branch: input.branch, base: input.base };
   }
 
+  /** Nothing to do: a worktree shares its object store and refs with the repo. */
+  async publishBranch(_branch: string): Promise<void> {}
+
   async getDiff(ref: ChangeRequestRef): Promise<Diff> {
     // Three dots: what the branch changed relative to where it forked, not
     // everything that happened on the base since.

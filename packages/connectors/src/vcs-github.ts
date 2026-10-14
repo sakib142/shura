@@ -23,6 +23,13 @@ export interface GitHubOptions {
   /** Where clones live. One per project, reused across runs. */
   readonly workDir: string;
   readonly fetch?: typeof fetch;
+  /**
+   * How the local clone is brought up to date with a ref.
+   *
+   * Injectable because the default does real git work against a real clone,
+   * and the API behaviour is worth testing without one.
+   */
+  readonly syncRef?: (ref: string) => Promise<void>;
 }
 
 export class GitHubError extends Error {
@@ -54,10 +61,7 @@ export class GitHubVcs implements Vcs {
     const dir = `${this.#o.workDir}/${this.#o.repo}.git`;
     const git = new Git(this.#o.workDir);
     const exists = await new Git(dir).tryRun('rev-parse', '--git-dir');
-    if (exists.ok) {
-      await new Git(dir).run('fetch', '--prune', 'origin', '+refs/heads/*:refs/heads/*');
-      return dir;
-    }
+    if (exists.ok) return dir;
     // The token goes in the remote URL, which is why it is never logged: Git
     // errors echo the command, and a URL-embedded credential would land in the
     // audit trail.
@@ -65,7 +69,20 @@ export class GitHubVcs implements Vcs {
     return dir;
   }
 
+  /** Pulls every branch from GitHub into the local clone. */
+  async refresh(): Promise<void> {
+    await this.#sync('*');
+  }
+
+  async #sync(ref: string): Promise<void> {
+    if (this.#o.syncRef !== undefined) return this.#o.syncRef(ref);
+    const dir = await this.repoDir();
+    const spec = ref === '*' ? '+refs/heads/*:refs/heads/*' : `+refs/heads/${ref}:refs/heads/${ref}`;
+    await new Git(dir).run('fetch', '--prune', 'origin', spec);
+  }
+
   async createBranch(from: string, name: string): Promise<void> {
+    await this.refresh();
     const sha = await this.#shaOf(from);
     const res = await this.#call(`/git/refs`, {
       method: 'POST',
@@ -75,10 +92,26 @@ export class GitHubVcs implements Vcs {
     if (!res.ok && res.status !== 422) {
       throw new GitHubError(res.status, (await res.text()).slice(0, 300));
     }
+
+    // The branch now exists on GitHub and the local clone has never heard of
+    // it. Worktrees come from the clone, so without this the next step fails
+    // with "invalid reference" for a branch that demonstrably exists.
+    await this.#sync(name);
   }
 
   async commit(): Promise<string> {
     throw new Error('commit happens in the worktree, under the agent identity');
+  }
+
+  async publishBranch(branch: string): Promise<void> {
+    const dir = await this.repoDir();
+    const push = await new Git(dir).tryRun(
+      'push', this.#cloneUrl(), `refs/heads/${branch}:refs/heads/${branch}`,
+    );
+    if (!push.ok) {
+      // The URL carries the token, so it must never reach an error message.
+      throw new GitHubError(0, `could not push ${branch}`, redactUrl(push.stderr));
+    }
   }
 
   async openChangeRequest(input: {
@@ -107,16 +140,28 @@ export class GitHubVcs implements Vcs {
         return { id: String(existing.number), branch: input.branch, base: input.base };
       }
     }
-    if (!res.ok) throw new GitHubError(res.status, (await res.text()).slice(0, 300));
+    if (!res.ok) {
+      throw new GitHubError(
+        res.status,
+        (await res.text()).slice(0, 300),
+        'A pull request needs commits on the branch that are not on the base. ' +
+          'If the branch was never pushed, there is nothing to open one for.',
+      );
+    }
 
     const pr = (await res.json()) as { number: number; html_url: string };
     return { id: String(pr.number), branch: input.branch, base: input.base };
   }
 
   async getDiff(ref: ChangeRequestRef): Promise<Diff> {
-    const files = await this.#call(`/pulls/${ref.id}/files?per_page=100`);
-    if (!files.ok) throw new GitHubError(files.status, (await files.text()).slice(0, 300));
-    const list = (await files.json()) as { filename: string; patch?: string }[];
+    // Compare, not the pull request's file list. The loop asks for a diff
+    // before a pull request exists — to decide whether the producer changed
+    // anything worth opening one for — and /pulls/{id}/files 404s on an id
+    // that is not yet a number.
+    const range = `${encodeURIComponent(ref.base)}...${encodeURIComponent(ref.branch)}`;
+    const res = await this.#call(`/compare/${range}`);
+    if (!res.ok) throw new GitHubError(res.status, (await res.text()).slice(0, 300));
+    const list = ((await res.json()) as { files?: { filename: string; patch?: string }[] }).files ?? [];
 
     const generated = list.filter((f) =>
       /(^|\/)(node_modules|dist|coverage)\/|(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock)$/.test(
@@ -296,4 +341,9 @@ export class GitHubMergeQueue implements MergeQueue {
     const merged = (await res.json()) as { sha: string };
     return { status: 'merged', ref, commit: merged.sha };
   }
+}
+
+/** Strips a token out of anything git echoed back. */
+function redactUrl(text: string): string {
+  return text.replace(/https:\/\/[^@\s]+@/g, 'https://[redacted]@');
 }

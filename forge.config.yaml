@@ -9,10 +9,12 @@ project: agent-hub
 
 # Where the code lives.
 repo:
-  type: local
-  path: ./eval/fixtures/target-ui
+  type: github
+  owner: sakib142
+  name: forge-sandbox
   base: main
   checks: ["sh", "-c", "pnpm install --prefer-offline --silent >/dev/null 2>&1 && pnpm exec vitest run"]
+  tokenEnv: GITHUB_TOKEN
 
   # To work against a real GitHub repository instead:
   # type: github

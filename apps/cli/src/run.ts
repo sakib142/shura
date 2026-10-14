@@ -11,7 +11,7 @@
 
 import { join } from 'node:path';
 import { createPool, databaseUrl, isReachable } from '@forge/db';
-import { JiraTracker, initRepo } from '@forge/connectors';
+import { GitHubMergeQueue, GitHubVcs, JiraTracker, initRepo } from '@forge/connectors';
 import { loadConfig, resolveFrom, type AgentConfig, type ForgeConfig } from '@forge/config';
 import { loadAllRoles, withPrompt } from '@forge/roles';
 import {
@@ -203,15 +203,33 @@ export async function run(args: string[]): Promise<number> {
     return 1;
   }
 
-  if (config.repo.type !== 'local') {
-    console.error(`repo type "${config.repo.type}" is not implemented yet. Use type: local.`);
-    await pool.end();
-    return 2;
-  }
+  let repoDir: string;
+  let github: { vcs: GitHubVcs; queue: GitHubMergeQueue } | undefined;
 
-  const repoDir = join(loaded.dir, '.forge', `${config.project}.git`);
-  console.log(`seeding ${config.project} from ${config.repo.path}`);
-  await initRepo(repoDir, resolveFrom(loaded, config.repo.path));
+  if (config.repo.type === 'github') {
+    const token = process.env[config.repo.tokenEnv] ?? '';
+    if (token === '') {
+      console.error(`repo is github but ${config.repo.tokenEnv} is not set.`);
+      await pool.end();
+      return 2;
+    }
+    const options = {
+      owner: config.repo.owner,
+      repo: config.repo.name,
+      token,
+      base: config.repo.base,
+      checkCommand: config.repo.checks,
+      workDir: join(loaded.dir, '.forge'),
+    };
+    const vcs = new GitHubVcs(options);
+    github = { vcs, queue: new GitHubMergeQueue(options, vcs) };
+    console.log(`cloning ${config.repo.owner}/${config.repo.name}`);
+    repoDir = await vcs.repoDir();
+  } else {
+    repoDir = join(loaded.dir, '.forge', `${config.project}.git`);
+    console.log(`seeding ${config.project} from ${config.repo.path}`);
+    await initRepo(repoDir, resolveFrom(loaded, config.repo.path));
+  }
 
   console.log(
     `\n${key}  ${rows[0].title}\n` +
@@ -229,6 +247,7 @@ export async function run(args: string[]): Promise<number> {
       producer: { runtime: runtimeFor(producer.agent), role: producer.role, name: 'dev-01' },
       verifier: { runtime: runtimeFor(verifier.agent), role: verifier.role, name: 'rev-01' },
       loopCap: config.budgets.loop_cap,
+      ...(github === undefined ? {} : { vcs: github.vcs, mergeQueue: github.queue }),
       ...(tracker === undefined ? {} : { tracker }),
       onEvent: render,
     });

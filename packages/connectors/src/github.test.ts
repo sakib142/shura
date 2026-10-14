@@ -26,9 +26,26 @@ const base = {
   token: 'tok',
   checkCommand: ['true'] as const,
   workDir: '/tmp',
+  // No real clone in these tests: they exercise the API surface, and the local
+  // sync is covered by the live run.
+  syncRef: async () => {},
 };
 
 describe('branches', () => {
+  // The first live run failed here: the branch was created on GitHub and the
+  // local clone had never heard of it, so the worktree could not be made.
+  it('brings the new branch into the local clone', async () => {
+    const synced: string[] = [];
+    const { fetch } = fakeGitHub({
+      '/git/ref/heads/main': { body: { object: { sha: 'abc' } } },
+      'POST /git/refs': { status: 201, body: {} },
+    });
+    await new GitHubVcs({
+      ...base, fetch, syncRef: async (r) => { synced.push(r); },
+    }).createBranch('main', 'feature/X-1');
+    expect(synced).toContain('feature/X-1');
+  });
+
   it('creates a branch from the base sha', async () => {
     const { fetch, calls } = fakeGitHub({
       '/git/ref/heads/main': { body: { object: { sha: 'abc123' } } },
@@ -87,11 +104,11 @@ describe('pull requests', () => {
 });
 
 describe('diffs', () => {
-  it('returns the changed files and their patches', async () => {
+  // The loop asks for a diff before a pull request exists, so this cannot be
+  // the pull request's own file list.
+  it('compares branch to base rather than reading a pull request', async () => {
     const { fetch } = fakeGitHub({
-      '/pulls/41/files?per_page=100': {
-        body: [{ filename: 'src/a.ts', patch: '@@ -1 +1 @@' }],
-      },
+      '/compare/main...b': { body: { files: [{ filename: 'src/a.ts', patch: '@@ -1 +1 @@' }] } },
     });
     const diff = await new GitHubVcs({ ...base, fetch }).getDiff({ id: '41', branch: 'b', base: 'main' });
     expect(diff.files).toEqual(['src/a.ts']);
@@ -100,9 +117,7 @@ describe('diffs', () => {
   // The failure that cost six dollars and shipped three scratch files.
   it('refuses a pull request carrying generated files', async () => {
     const { fetch } = fakeGitHub({
-      '/pulls/41/files?per_page=100': {
-        body: [{ filename: 'src/a.ts' }, { filename: 'pnpm-lock.yaml' }],
-      },
+      '/compare/main...b': { body: { files: [{ filename: 'src/a.ts' }, { filename: 'pnpm-lock.yaml' }] } },
     });
     await expect(
       new GitHubVcs({ ...base, fetch }).getDiff({ id: '41', branch: 'b', base: 'main' }),
@@ -111,7 +126,7 @@ describe('diffs', () => {
 
   it('refuses node_modules too', async () => {
     const { fetch } = fakeGitHub({
-      '/pulls/41/files?per_page=100': { body: [{ filename: 'node_modules/react/index.js' }] },
+      '/compare/main...b': { body: { files: [{ filename: 'node_modules/react/index.js' }] } },
     });
     await expect(
       new GitHubVcs({ ...base, fetch }).getDiff({ id: '41', branch: 'b', base: 'main' }),

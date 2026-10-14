@@ -21,6 +21,8 @@ import {
   type VerifierCandidate,
 } from '@forge/core';
 import type {
+  MergeQueue,
+  Vcs,
   Tracker,
   TrackerState,
   AgentEvent,
@@ -58,6 +60,9 @@ export interface RunOptions {
    * itself, so there is one writer per field and nothing to reconcile.
    */
   readonly tracker?: Tracker;
+  /** Supplied for GitHub; the local pair is built when absent. */
+  readonly vcs?: Vcs & { base?: string };
+  readonly mergeQueue?: MergeQueue;
 }
 
 export interface RunOutcome {
@@ -87,8 +92,12 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
   };
   const cap = opts.loopCap ?? 3;
   const vcsOpts = { repoDir: opts.repoDir, pool: opts.pool, checkCommand: opts.checkCommand };
-  const vcs = new LocalVcs(vcsOpts);
-  const queue = new LocalMergeQueue(vcsOpts, vcs);
+  const localVcs = new LocalVcs(vcsOpts);
+  // Typed as the port, not the local implementation: casting to the concrete
+  // class is how a second implementation silently stops being substitutable.
+  const vcs: Vcs & { base?: string } = opts.vcs ?? localVcs;
+  const base = vcs.base ?? 'main';
+  const queue = opts.mergeQueue ?? new LocalMergeQueue(vcsOpts, localVcs);
   const effects = new PgEffectStore(opts.pool);
   const audit = new PgAuditSink(opts.pool);
 
@@ -116,7 +125,6 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
     }
   };
   const branch = `feature/${opts.workItemKey}`;
-  const base = vcs.base;
 
   const producerActor: ActorIdentity = {
     agentId: opts.producer.name,
@@ -200,6 +208,9 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
     } finally {
       await produceWt.destroy();
     }
+
+    // Local: free. Remote: the push without which a pull request has nothing in it.
+    await vcs.publishBranch(branch);
 
     const changed = await vcs.getDiff({ id: 'probe', branch, base });
     if (changed.files.length === 0) {
