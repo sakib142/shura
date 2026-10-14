@@ -1,0 +1,9 @@
+# Deterministic code, not a model. Rule 3: judgment happens in verification;
+# admission is mechanical. Loading this file with a `model:` key is an error.
+id: merge-queue
+kind: admit
+tools: [repo.merge]
+limits: { max_minutes: 15, max_tokens: 1, max_usd: 0.01 }
+instructions: prompts/merge-queue.md
+output: { merge_outcome: required }
+never: [repo.write, verdict.submit]

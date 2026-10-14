@@ -1,0 +1,12 @@
+id: code-reviewer
+kind: verify
+model:
+  runtime: openai
+  model: gpt-5
+  # must stay a different vendor from the producer
+  fallback: google/gemini-2.5-pro
+tools: [repo.read, test.run, verdict.submit]
+limits: { max_minutes: 30, max_tokens: 400000, max_usd: 2.00 }
+instructions: prompts/code-reviewer.md
+output: { verdict: required }
+never: [repo.write, repo.merge, claims.claim]

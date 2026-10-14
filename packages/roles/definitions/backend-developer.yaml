@@ -1,0 +1,11 @@
+id: backend-developer
+kind: produce
+model:
+  runtime: anthropic
+  model: claude-sonnet-5
+  fallback: google/gemini-2.5-pro
+tools: [repo.read, repo.write, test.run, tracker.comment, claims.claim]
+limits: { max_minutes: 90, max_tokens: 2000000, max_usd: 8.00 }
+instructions: prompts/backend-developer.md
+output: { change_request: required, evidence: [unit-tests, contract-tests] }
+never: [repo.merge, tracker.write]

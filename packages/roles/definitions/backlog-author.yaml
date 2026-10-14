@@ -1,0 +1,10 @@
+id: backlog-author
+kind: produce
+model:
+  runtime: anthropic
+  model: claude-sonnet-5
+tools: [tracker.read, tracker.write, docs.read]
+limits: { max_minutes: 45, max_tokens: 800000, max_usd: 4.00 }
+instructions: prompts/backlog-author.md
+output: { stories: required }
+never: [repo.write, repo.merge]

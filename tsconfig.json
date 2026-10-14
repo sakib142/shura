@@ -1,0 +1,29 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "./packages/git"
+    },
+    {
+      "path": "./packages/core"
+    },
+    {
+      "path": "./packages/ports"
+    },
+    {
+      "path": "./packages/runtimes"
+    },
+    {
+      "path": "./packages/tool-gateway"
+    },
+    {
+      "path": "./packages/roles"
+    },
+    {
+      "path": "./packages/db"
+    },
+    {
+      "path": "./apps/cli"
+    }
+  ]
+}
