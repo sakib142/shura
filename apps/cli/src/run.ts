@@ -1,69 +1,42 @@
 /**
  * `forge run` — one work item through the whole loop, streaming.
  *
+ * Everything that used to be hardcoded here now comes from forge.config.yaml:
+ * which repo, which checks, which agent, which models, which budgets.
+ *
  * Deliberately verbose. The denial lines and the vendor-pair line are the
- * invariant being enforced in public: an operator should be able to see that
+ * invariant being enforced in public — an operator should be able to see that
  * the separation of duties is real, not asserted in a prompt.
  */
 
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createPool, databaseUrl, isReachable } from '@forge/db';
 import { initRepo } from '@forge/connectors';
+import { loadConfig, resolveFrom, type AgentConfig, type ForgeConfig } from '@forge/config';
 import { loadAllRoles, withPrompt } from '@forge/roles';
-import { AnthropicRuntime, OpenAIRuntime } from '@forge/runtimes';
+import {
+  AnthropicRuntime,
+  GoogleRuntime,
+  OpenAICompatibleRuntime,
+  OpenAIRuntime,
+} from '@forge/runtimes';
+import type { AgentRuntime } from '@forge/ports';
+import type { RoleDefinition } from '@forge/core';
 import { runWorkItem, type StreamEvent } from '@forge/orchestrator';
 
-const HERE = fileURLToPath(new URL('.', import.meta.url));
-const ROOT = join(HERE, '..', '..', '..');
-const FIXTURE = join(ROOT, 'eval', 'fixtures', 'target-app');
-const REPO = join(ROOT, '.forge', 'target.git');
-const CHECK = ['node', '--test', '--experimental-strip-types', 'test/orders.test.ts'];
-
-const SEED = {
-  key: 'ORD-12',
-  title: 'Filter orders by status',
-  criteria: [
-    'Given a status filter, when orders are listed, then only orders with that status are returned',
-    'Given no status filter, when orders are listed, then orders of every status are returned',
-    'Given an unknown status, when orders are listed, then no orders are returned and no error is thrown',
-  ],
-};
-
-function stamp(): string {
-  return new Date().toTimeString().slice(0, 8);
-}
-
 function render(e: StreamEvent): void {
-  const t = stamp();
-  if (e.kind === 'phase') {
-    console.log(`${t}  ${e.state.padEnd(22)} ${e.detail}`);
-  } else if (e.kind === 'note') {
-    console.log(`${t}  ${''.padEnd(22)} ${e.text}`);
-  } else if (e.kind === 'verdict') {
-    console.log(`${t}  VERDICT ${e.decision.padEnd(18)} ${e.detail}`);
-  } else {
-    const { actor, event } = e;
-    const a = actor.padEnd(10);
-    switch (event.t) {
-      case 'tool_call':
-        console.log(`${t}  ${a} tool  ${event.tool} ${preview(event.args)}`);
-        break;
-      case 'tool_result':
-        if (!event.ok) console.log(`${t}  ${a} DENIED ${event.denialReason ?? ''}`);
-        break;
-      case 'file_change':
-        console.log(`${t}  ${a} wrote ${event.path}`);
-        break;
-      case 'usage':
-        console.log(`${t}  ${a} ${event.tokensIn}/${event.tokensOut} tok  $${event.usd.toFixed(4)}`);
-        break;
-      case 'error':
-        console.log(`${t}  ${a} ERROR ${event.message}`);
-        break;
-      default:
-        break;
-    }
+  const t = new Date().toTimeString().slice(0, 8);
+  if (e.kind === 'phase') console.log(`${t}  ${e.state.padEnd(22)} ${e.detail}`);
+  else if (e.kind === 'note') console.log(`${t}  ${''.padEnd(22)} ${e.text}`);
+  else if (e.kind === 'verdict') console.log(`${t}  VERDICT ${e.decision.padEnd(18)} ${e.detail}`);
+  else {
+    const a = e.actor.padEnd(10);
+    const ev = e.event;
+    if (ev.t === 'tool_call') console.log(`${t}  ${a} tool  ${ev.tool} ${preview(ev.args)}`);
+    else if (ev.t === 'tool_result' && !ev.ok) console.log(`${t}  ${a} DENIED ${ev.denialReason ?? ''}`);
+    else if (ev.t === 'file_change') console.log(`${t}  ${a} wrote ${ev.path}`);
+    else if (ev.t === 'usage') console.log(`${t}  ${a} ${ev.tokensIn}/${ev.tokensOut} tok  $${ev.usd.toFixed(4)}`);
+    else if (ev.t === 'error') console.log(`${t}  ${a} ERROR ${ev.message}`);
   }
 }
 
@@ -72,10 +45,97 @@ function preview(args: unknown): string {
   return s.length > 90 ? `${s.slice(0, 90)}…` : s;
 }
 
-export async function run(args: string[]): Promise<number> {
-  const key = args.find((a) => !a.startsWith('--')) ?? SEED.key;
-  const pool = createPool();
+/** The runtime for a vendor. One place, so a new vendor is one line. */
+export function runtimeFor(agent: AgentConfig): AgentRuntime {
+  switch (agent.runtime) {
+    case 'anthropic': return new AnthropicRuntime();
+    case 'openai': return new OpenAIRuntime();
+    case 'google': return new GoogleRuntime();
+    case 'local': return new OpenAICompatibleRuntime();
+  }
+}
 
+/** Applies config overrides on top of a shipped role definition. */
+export function configuredRole(
+  config: ForgeConfig,
+  roleId: string,
+  base: RoleDefinition,
+): { role: RoleDefinition; agent: AgentConfig } {
+  const override = config.agents[roleId];
+  const model = override ?? {
+    runtime: base.model?.runtime ?? 'anthropic',
+    model: base.model?.model ?? 'claude-sonnet-5',
+    parallel: 1,
+  };
+  return {
+    agent: model,
+    role: {
+      ...base,
+      model: {
+        runtime: model.runtime,
+        model: model.model,
+        ...(model.fallback === undefined ? {} : { fallback: model.fallback }),
+      },
+      limits: {
+        max_minutes: config.budgets.per_task_minutes,
+        max_tokens: config.budgets.per_task_tokens,
+        max_usd: config.budgets.per_task_usd,
+      },
+    },
+  };
+}
+
+function flag(args: string[], name: string): string | undefined {
+  const exact = args.find((a) => a.startsWith(`--${name}=`));
+  if (exact !== undefined) return exact.split('=').slice(1).join('=');
+  const i = args.indexOf(`--${name}`);
+  return i >= 0 ? args[i + 1] : undefined;
+}
+
+export async function run(args: string[]): Promise<number> {
+  const loaded = loadConfig(flag(args, 'config'));
+  const config = loaded.config;
+
+  const key = args.find((a) => !a.startsWith('--') && !isFlagValue(args, a));
+  if (key === undefined) {
+    console.error('usage: forge run <ITEM> [--role backend-developer] [--reviewer code-reviewer] [--reset]');
+    return 2;
+  }
+
+  const producerId = flag(args, 'role') ?? 'backend-developer';
+  const verifierId = flag(args, 'reviewer') ?? 'code-reviewer';
+
+  const roles = loadAllRoles();
+  const producerBase = roles.get(producerId);
+  const verifierBase = roles.get(verifierId);
+  if (producerBase === undefined || verifierBase === undefined) {
+    console.error(
+      `unknown role. Available: ${[...roles.keys()].join(', ')}`,
+    );
+    return 2;
+  }
+  if (producerBase.kind !== 'produce') {
+    console.error(`"${producerId}" is a ${producerBase.kind} role, not a producer.`);
+    return 2;
+  }
+  if (verifierBase.kind !== 'verify') {
+    console.error(`"${verifierId}" is a ${verifierBase.kind} role, not a verifier.`);
+    return 2;
+  }
+
+  const producer = configuredRole(config, producerId, withPrompt(producerBase));
+  const verifier = configuredRole(config, verifierId, withPrompt(verifierBase));
+
+  // Caught here rather than after the producer has already run and spent.
+  if (producer.agent.runtime === verifier.agent.runtime) {
+    console.error(
+      `${producerId} and ${verifierId} are both on "${producer.agent.runtime}".\n` +
+        'A verifier must run a different vendor. Change one in forge.config.yaml under `agents`.',
+    );
+    return 2;
+  }
+
+  const pool = createPool();
   if (!(await isReachable(pool))) {
     console.error(`postgres unreachable at ${databaseUrl()} — run: pnpm db:up && pnpm migrate`);
     await pool.end();
@@ -84,38 +144,45 @@ export async function run(args: string[]): Promise<number> {
 
   if (args.includes('--reset')) {
     await pool.query('TRUNCATE merge_queue, change_requests, verdicts, artifacts, tasks CASCADE');
-    await pool.query('DELETE FROM work_items WHERE key = $1', [key]);
-    console.log(`reset: cleared prior runs of ${key}`);
+    console.log('reset: cleared prior runs');
   }
 
-  await pool.query(
-    `INSERT INTO work_items (key, type, title, acceptance_criteria, state)
-     VALUES ($1, 'story', $2, $3::jsonb, 'draft')
-     ON CONFLICT (key) DO NOTHING`,
-    [key, SEED.title, JSON.stringify(SEED.criteria)],
+  const { rows } = await pool.query<{ title: string }>(
+    'SELECT title FROM work_items WHERE key = $1',
+    [key],
   );
+  if (rows[0] === undefined) {
+    console.error(`no work item "${key}". Create one with:  forge submit <file.md>`);
+    await pool.end();
+    return 1;
+  }
 
-  console.log(`seeding target repo from ${FIXTURE.replace(ROOT, '.')}`);
-  await initRepo(REPO, FIXTURE);
+  if (config.repo.type !== 'local') {
+    console.error(`repo type "${config.repo.type}" is not implemented yet. Use type: local.`);
+    await pool.end();
+    return 2;
+  }
 
-  const roles = loadAllRoles();
-  const producerRole = withPrompt(roles.get('backend-developer')!);
-  const verifierRole = withPrompt(roles.get('code-reviewer')!);
+  const repoDir = join(loaded.dir, '.forge', `${config.project}.git`);
+  console.log(`seeding ${config.project} from ${config.repo.path}`);
+  await initRepo(repoDir, resolveFrom(loaded, config.repo.path));
 
   console.log(
-    `\n${key}  ${SEED.title}\n` +
-      `producer  ${producerRole.model?.runtime}/${producerRole.model?.model}\n` +
-      `verifier  ${verifierRole.model?.runtime}/${verifierRole.model?.model}\n`,
+    `\n${key}  ${rows[0].title}\n` +
+      `producer  ${producerId.padEnd(20)} ${producer.agent.runtime}/${producer.agent.model}\n` +
+      `verifier  ${verifierId.padEnd(20)} ${verifier.agent.runtime}/${verifier.agent.model}\n` +
+      `budget    $${config.budgets.per_task_usd} per task, ${config.budgets.loop_cap} attempts\n`,
   );
 
   try {
     const outcome = await runWorkItem({
       pool,
-      repoDir: REPO,
-      checkCommand: CHECK,
+      repoDir,
+      checkCommand: config.repo.checks,
       workItemKey: key,
-      producer: { runtime: new AnthropicRuntime(), role: producerRole, name: 'dev-01' },
-      verifier: { runtime: new OpenAIRuntime(), role: verifierRole, name: 'rev-01' },
+      producer: { runtime: runtimeFor(producer.agent), role: producer.role, name: 'dev-01' },
+      verifier: { runtime: runtimeFor(verifier.agent), role: verifier.role, name: 'rev-01' },
+      loopCap: config.budgets.loop_cap,
       onEvent: render,
     });
 
@@ -131,4 +198,10 @@ export async function run(args: string[]): Promise<number> {
   } finally {
     await pool.end();
   }
+}
+
+/** True when `value` is the argument to a preceding --flag. */
+function isFlagValue(args: string[], value: string): boolean {
+  const i = args.indexOf(value);
+  return i > 0 && (args[i - 1]?.startsWith('--') ?? false) && !args[i - 1]!.includes('=');
 }

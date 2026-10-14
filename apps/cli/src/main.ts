@@ -15,6 +15,9 @@ import { loadAllRoles } from '@forge/roles';
 import { smoke } from './smoke.js';
 import { run } from './run.js';
 import { probe } from './probe.js';
+import { submit } from './submit.js';
+import { init } from './init.js';
+import { ConfigInvalid } from '@forge/config';
 
 const KEY_ENV: Record<Vendor, string> = {
   anthropic: 'ANTHROPIC_API_KEY',
@@ -121,18 +124,46 @@ async function audit(args: string[]): Promise<number> {
 }
 
 const [command, ...rest] = process.argv.slice(2);
-const exit = await (command === 'doctor'
-  ? doctor()
-  : command === 'audit'
-    ? audit(rest)
-    : command === 'smoke'
-      ? smoke(rest[0])
-      : command === 'run'
-        ? run(rest)
-        : command === 'probe'
-          ? probe(rest)
-          : (console.error(
-               'usage: forge <doctor|audit --verify|smoke [vendor]|run [ITEM] [--reset]|probe [CASE]>',
-             ),
-             Promise.resolve(2)));
+
+async function dispatch(): Promise<number> {
+  switch (command) {
+    case 'doctor': return doctor();
+    case 'audit': return audit(rest);
+    case 'smoke': return smoke(rest[0]);
+    case 'run': return run(rest);
+    case 'probe': return probe(rest);
+    case 'submit': return submit(rest);
+    case 'init': return init(rest);
+    default:
+      console.error(
+        [
+          'usage: forge <command>',
+          '',
+          '  init                       write a starter forge.config.yaml',
+          '  doctor                     check everything is wired up',
+          '  submit <file.md>           define a work item and its acceptance criteria',
+          '  run <ITEM> [--role R]      build it, review it, merge it',
+          '  probe [CASE]               measure whether the reviewer catches seeded faults',
+          '  smoke [vendor]             one real round-trip per vendor',
+          '  audit --verify             check the audit log for tampering',
+        ].join('\n'),
+      );
+      return 2;
+  }
+}
+
+let exit: number;
+try {
+  exit = await dispatch();
+} catch (err) {
+  // A config problem is a thing the user can fix, not a crash. Printing a
+  // stack trace at someone whose YAML has a typo is how a project loses them.
+  if (err instanceof ConfigInvalid) {
+    console.error(`cannot read configuration:\n\n${err.message}\n`);
+    exit = 2;
+  } else {
+    console.error(err instanceof Error ? err.stack ?? err.message : String(err));
+    exit = 1;
+  }
+}
 process.exit(exit);

@@ -17,7 +17,8 @@
     "@forge/orchestrator": "workspace:*",
     "@forge/connectors": "workspace:*",
     "@forge/sandbox": "workspace:*",
-    "@forge/fault-corpus": "workspace:*"
+    "@forge/fault-corpus": "workspace:*",
+    "@forge/config": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2"
