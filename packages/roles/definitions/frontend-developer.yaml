@@ -1,0 +1,11 @@
+id: frontend-developer
+kind: produce
+model:
+  runtime: anthropic
+  model: claude-sonnet-5
+  fallback: google/gemini-3.8-flash
+tools: [repo.read, repo.write, test.run, tracker.comment, claims.claim]
+limits: { max_minutes: 90, max_tokens: 2000000, max_usd: 8.00 }
+instructions: prompts/frontend-developer.md
+output: { change_request: required, evidence: [component-tests] }
+never: [repo.merge, tracker.write]

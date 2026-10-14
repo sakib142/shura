@@ -11,6 +11,8 @@ describe('the shipped role definitions', () => {
       'backlog-author',
       'backlog-reviewer',
       'code-reviewer',
+      'design-analyst',
+      'frontend-developer',
       'merge-queue',
     ]);
   });
@@ -39,12 +41,14 @@ describe('the shipped role definitions', () => {
   it('pair each producer with a verifier on a different vendor', () => {
     const pairs: Array<[string, string]> = [
       ['backend-developer', 'code-reviewer'],
+      ['frontend-developer', 'code-reviewer'],
       ['backlog-author', 'backlog-reviewer'],
+      ['design-analyst', 'backlog-reviewer'],
     ];
     for (const [p, v] of pairs) {
       const producer = roles.get(p)!;
       const verifier = roles.get(v)!;
-      expect(verifier.model?.runtime).not.toBe(producer.model?.runtime);
+      expect(verifier.model?.runtime, `${p} -> ${v}`).not.toBe(producer.model?.runtime);
     }
   });
 
@@ -53,6 +57,7 @@ describe('the shipped role definitions', () => {
   it('never let a verifier fall back onto its producer vendor', () => {
     const pairs: Array<[string, string]> = [
       ['backend-developer', 'code-reviewer'],
+      ['frontend-developer', 'code-reviewer'],
       ['backlog-author', 'backlog-reviewer'],
     ];
     for (const [p, v] of pairs) {
