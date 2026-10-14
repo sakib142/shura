@@ -35,7 +35,7 @@ import type {
 import { agentIdentity } from '@forge/git';
 import { Worktree } from '@forge/sandbox';
 import { LocalMergeQueue, LocalVcs } from '@forge/connectors';
-import { PgAuditSink, PgEffectStore } from '@forge/db';
+import { PgAuditSink, PgClaims, PgEffectStore } from '@forge/db';
 import { McpToolGateway, resolveGrants, type ToolHandler } from '@forge/tool-gateway';
 import { producerHandlers, verifierHandlers } from './handlers.js';
 
@@ -100,6 +100,7 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
   const queue = opts.mergeQueue ?? new LocalMergeQueue(vcsOpts, localVcs);
   const effects = new PgEffectStore(opts.pool);
   const audit = new PgAuditSink(opts.pool);
+  const claims = new PgClaims(opts.pool);
 
   const item = await loadWorkItem(opts.pool, opts.workItemKey);
 
@@ -155,8 +156,30 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
     emit({ kind: 'phase', state, detail: `${opts.producer.name}  attempt ${attempt}/${cap}` });
 
     await move('in_progress');
-    await vcs.createBranch(base, branch);
+
+    // The branch is claimed before anything else happens. Two tasks on one
+    // branch is the collision that needs no file analysis to rule out, and
+    // refusing here costs nothing.
     const produceTaskId = await createTask(opts.pool, item.id, 'produce', opts.producer.role.id, attempt);
+    const claimed = await claims.acquire({
+      agentId: opts.producer.name,
+      taskId: produceTaskId,
+      branch,
+      fileGlobs: [],
+    });
+    if (!claimed.granted) {
+      emit({ kind: 'note', text: `cannot start: ${claimed.reason} (held by ${claimed.heldBy})` });
+      return { state, attempts: attempt, reason: claimed.reason, usd };
+    }
+    const claimId = claimed.claimId;
+
+    // Renewed while the agent works. A claim that lapses mid-task would let
+    // another agent take the branch out from under this one.
+    const beat = setInterval(() => {
+      void claims.heartbeat(claimId).catch(() => {});
+    }, 60_000);
+
+    await vcs.createBranch(base, branch);
 
     const produceWt = await Worktree.create({
       repoDir: opts.repoDir,
@@ -176,6 +199,20 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
           checkCommand: opts.checkCommand,
           criterionCount: item.criteria.length,
           onComment: (body) => emit({ kind: 'note', text: `${opts.producer.name}: ${body}` }),
+          claims: {
+            claim: async (claimBranch, fileGlobs) => {
+              const r = await claims.acquire({
+                agentId: opts.producer.name,
+                taskId: produceTaskId,
+                branch,
+                fileGlobs,
+              });
+              void claimBranch;
+              return r.granted
+                ? { ok: true as const, expiresAt: r.expiresAt }
+                : { ok: false as const, reason: `${r.reason}; held by ${r.heldBy}` };
+            },
+          },
         }) as Map<ToolName, ToolHandler>,
         audit,
         effects,
@@ -206,7 +243,9 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
         await produceWt.git.run('commit', '-q', '-m', `${item.key}: ${item.title}`);
       }
     } finally {
+      clearInterval(beat);
       await produceWt.destroy();
+      await claims.release(claimId);
     }
 
     // Local: free. Remote: the push without which a pull request has nothing in it.

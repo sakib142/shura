@@ -1,5 +1,6 @@
 export * from './vocabulary.js';
 export * from './hash.js';
+export * from './globs.js';
 export * from './invariant.js';
 export * from './state-machine.js';
 export * from './schemas/tools.js';

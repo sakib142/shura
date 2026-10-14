@@ -20,6 +20,14 @@ export interface VerifierFacts {
   readonly spent: () => { tokensIn: number; tokensOut: number; usd: number };
 }
 
+/** How a producer takes file ownership. Absent means claiming is unavailable,
+ *  which is reported rather than silently succeeding. */
+export interface ClaimBroker {
+  claim(branch: string, fileGlobs: readonly string[]): Promise<
+    { ok: true; expiresAt: Date } | { ok: false; reason: string }
+  >;
+}
+
 export interface HandlerContext {
   readonly worktree: Worktree;
   readonly pool: Pool;
@@ -31,6 +39,7 @@ export interface HandlerContext {
   onVerdict?: (v: AcceptedVerdict) => void;
   onComment?: (body: string) => void;
   verifier?: VerifierFacts;
+  claims?: ClaimBroker;
 }
 
 export function producerHandlers(ctx: HandlerContext): Map<ToolName, ToolHandler> {
@@ -57,7 +66,20 @@ export function producerHandlers(ctx: HandlerContext): Map<ToolName, ToolHandler
         return { posted: true };
       },
     ],
-    ['claims.claim', async ({ args }) => ({ claimed: args })],
+    [
+      'claims.claim',
+      async ({ args }) => {
+        const { branch, fileGlobs } = args as { branch: string; fileGlobs: string[] };
+        if (ctx.claims === undefined) {
+          // Never report a claim that was not taken. An agent told it owns
+          // files it does not own will edit them.
+          throw new Error('claiming is not available in this run');
+        }
+        const result = await ctx.claims.claim(branch, fileGlobs);
+        if (!result.ok) throw new Error(result.reason);
+        return { claimed: fileGlobs, branch, expiresAt: result.expiresAt.toISOString() };
+      },
+    ],
   ]);
 }
 
