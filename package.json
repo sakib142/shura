@@ -13,7 +13,7 @@
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
     "migrate": "bash scripts/migrate.sh",
-    "forge": "tsx apps/cli/src/main.ts"
+    "forge": "node --env-file-if-exists=.env --import tsx apps/cli/src/main.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
