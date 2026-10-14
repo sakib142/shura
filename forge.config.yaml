@@ -10,9 +10,9 @@ project: agent-hub
 # Where the code lives.
 repo:
   type: local
-  path: ./eval/fixtures/target-app
+  path: ./eval/fixtures/target-ui
   base: main
-  checks: ["node", "--test", "--experimental-strip-types", "test/orders.test.ts"]
+  checks: ["sh", "-c", "pnpm install --prefer-offline --silent >/dev/null 2>&1 && pnpm exec vitest run"]
 
   # To work against a real GitHub repository instead:
   # type: github
@@ -48,6 +48,12 @@ agents:
     runtime: anthropic
     model: claude-sonnet-5
   code-reviewer:
+    runtime: openai
+    model: gpt-6.1-sol
+  backlog-author:
+    runtime: anthropic
+    model: claude-sonnet-5
+  backlog-reviewer:
     runtime: openai
     model: gpt-6.1-sol
 

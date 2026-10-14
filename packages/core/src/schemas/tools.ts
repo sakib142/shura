@@ -136,6 +136,30 @@ export const TOOL_CATALOG = {
     effectKey: (a: { branch: string }, c) => `claims.claim:${c.taskId}:${a.branch}`,
     reclaimable: true,
   },
+  'backlog.propose': {
+    effect: 'write',
+    description:
+      'Propose the work items a design or brief should become. This does not create anything: ' +
+      'the proposal goes to a reviewer on a different vendor model first, and only a passing ' +
+      'verdict puts the stories into the tracker. Each story needs a title and acceptance ' +
+      'criteria in Given/When/Then form, each naming a condition, an action and an outcome ' +
+      'that a test could check. Record anything the design does not settle as an open question ' +
+      'rather than deciding it yourself.',
+    args: z.object({
+      stories: z
+        .array(
+          z.object({
+            title: z.string().min(1).max(200),
+            criteria: z.array(z.string().min(1)).min(1),
+            notes: z.string().max(2000).optional(),
+          }),
+        )
+        .min(1),
+      openQuestions: z.array(z.string().min(1)).default([]),
+    }),
+    effectKey: (_a: unknown, c) => `backlog.propose:${c.taskId}:${c.attempt}`,
+    reclaimable: false,
+  },
   'verdict.submit': {
     effect: 'write',
     description:

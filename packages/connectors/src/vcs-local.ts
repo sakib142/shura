@@ -11,7 +11,7 @@
  */
 
 import { cp, mkdir, rm } from 'node:fs/promises';
-import { join, sep } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import type { Pool } from 'pg';
 import { Git, agentIdentity } from '@forge/git';
 import { Worktree } from '@forge/sandbox';
@@ -82,9 +82,24 @@ export class LocalVcs implements Vcs {
     // Three dots: what the branch changed relative to where it forked, not
     // everything that happened on the base since.
     const range = `${ref.base}...${ref.branch}`;
-    const { stdout: text } = await this.#git.run('diff', range);
     const { stdout: names } = await this.#git.run('diff', '--name-only', range);
-    return { text, files: names.split('\n').filter((f) => f !== '') };
+    const files = names.split('\n').filter((f) => f !== '');
+
+    // Check the file list before the content. A diff too large to buffer is
+    // almost always something that should have been ignored being committed,
+    // and "maxBuffer exceeded" sends people looking in the wrong place.
+    const polluted = files.filter((f) => /(^|\/)(node_modules|dist|coverage)\//.test(f));
+    if (polluted.length > 0) {
+      throw new Error(
+        `${polluted.length} build-output file(s) are in this change, starting with ` +
+          `"${polluted[0]}". The repository needs a .gitignore covering node_modules, ` +
+          'dist and coverage — otherwise installing dependencies to run the checks ' +
+          'commits them.',
+      );
+    }
+
+    const { stdout: text } = await this.#git.run('diff', range);
+    return { text, files };
   }
 
   async runChecks(ref: ChangeRequestRef): Promise<CheckRun> {
@@ -220,7 +235,12 @@ export class LocalMergeQueue implements MergeQueue {
 }
 
 /** Creates the bare repository and seeds it from a directory of files. */
-export async function initRepo(repoDir: string, seedFrom: string): Promise<void> {
+export async function initRepo(repoDirInput: string, seedFromInput: string): Promise<void> {
+  // Resolved up front: git runs with its own cwd, so a relative path here means
+  // "relative to wherever git happens to be", which is never what was meant.
+  const repoDir = resolve(repoDirInput);
+  const seedFrom = resolve(seedFromInput);
+
   await rm(repoDir, { recursive: true, force: true });
   await mkdir(repoDir, { recursive: true });
   await new Git(repoDir).run('init', '-q', '--bare', '-b', 'main', '.');

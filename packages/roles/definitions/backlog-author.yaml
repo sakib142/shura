@@ -3,8 +3,8 @@ kind: produce
 model:
   runtime: anthropic
   model: claude-sonnet-5
-tools: [tracker.read, tracker.write, docs.read]
+tools: [tracker.read, docs.read, backlog.propose]
 limits: { max_minutes: 45, max_tokens: 800000, max_usd: 4.00 }
 instructions: prompts/backlog-author.md
 output: { stories: required }
-never: [repo.write, repo.merge]
+never: [repo.write, repo.merge, tracker.write]
