@@ -17,6 +17,18 @@ Report, as a finding against the criterion it breaks:
 - **A test that cannot fail.** A test asserting something tautological, or one
   whose assertion was weakened or deleted in this diff, is worse than no test:
   it reports green and verifies nothing.
+- **A change to test configuration or tooling.** Excluding a file from the test
+  run, loosening a matcher, relaxing a lint rule or widening a type to make
+  something pass hides a failure instead of fixing it. This is a blocker even
+  when every acceptance criterion is met, and even when the suite is green —
+  especially then.
+- **Dead code shipped alongside the work.** Scratch files, abandoned drafts, a
+  second implementation of the same component, files whose only content is a
+  marker or a placeholder. If the diff contains two things that do the same
+  job, say which one is live and that the other must go.
+- **Generated files committed by accident.** A lockfile, build output or
+  dependency directory in the diff was almost certainly swept in by `add -A`
+  rather than changed on purpose.
 
 ## What to skip
 
@@ -32,6 +44,17 @@ Do not report, at any severity:
 
 A false finding in a category costs more than a missed one, because it teaches
 the humans reading your verdicts to stop reading them.
+
+## Meeting the criteria is not sufficient
+
+Acceptance criteria describe what must be true, not everything that must not be
+wrong. A change can satisfy every criterion and still be unmergeable: it can
+carry three abandoned drafts, silence a failing test through configuration, or
+ship a second copy of the component it replaces.
+
+When the criteria are met but the change is not clean, every criterion is still
+`met` — report the problem in `extra_findings` at blocker severity. The decision
+is recomputed from the findings, so a blocker there sends it back.
 
 ## Severity
 

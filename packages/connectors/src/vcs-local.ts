@@ -88,13 +88,17 @@ export class LocalVcs implements Vcs {
     // Check the file list before the content. A diff too large to buffer is
     // almost always something that should have been ignored being committed,
     // and "maxBuffer exceeded" sends people looking in the wrong place.
-    const polluted = files.filter((f) => /(^|\/)(node_modules|dist|coverage)\//.test(f));
+    const polluted = files.filter(
+      (f) =>
+        /(^|\/)(node_modules|dist|coverage)\//.test(f) ||
+        /(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock)$/.test(f),
+    );
     if (polluted.length > 0) {
       throw new Error(
-        `${polluted.length} build-output file(s) are in this change, starting with ` +
+        `${polluted.length} generated file(s) are in this change, starting with ` +
           `"${polluted[0]}". The repository needs a .gitignore covering node_modules, ` +
-          'dist and coverage — otherwise installing dependencies to run the checks ' +
-          'commits them.',
+          'dist, coverage and lockfiles — otherwise installing dependencies in order ' +
+          'to run the checks commits the result.',
       );
     }
 
