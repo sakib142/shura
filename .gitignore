@@ -6,3 +6,4 @@ dist/
 .forge/
 coverage/
 .DS_Store
+.forge/

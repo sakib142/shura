@@ -94,8 +94,23 @@ describe('rule 2 at the door', () => {
 
   it('allows a verifier its one write channel', async () => {
     const { gateway } = build(reviewer);
-    const r = await gateway.call(req('verdict.submit', { artifactId: 'a1' }, { roleKind: 'verify' }));
+    const verdict = {
+      artifactId: 'a1',
+      decision: 'PASS',
+      criteria: [{ index: 0, status: 'met' }],
+    };
+    const r = await gateway.call(req('verdict.submit', verdict, { roleKind: 'verify' }));
     expect(r.allowed).toBe(true);
+  });
+
+  // The schema a verifier is shown must be the schema it is held to, or its
+  // first submission fails on fields it was never told about.
+  it('rejects a verdict missing the fields the schema advertises', async () => {
+    const { gateway } = build(reviewer);
+    const r = await gateway.call(req('verdict.submit', { artifactId: 'a1' }, { roleKind: 'verify' }));
+    expect(r.allowed).toBe(false);
+    expect((r as { errorCategory: string }).errorCategory).toBe('validation');
+    expect((r as { denialReason: string }).denialReason).toMatch(/decision|criteria/);
   });
 });
 

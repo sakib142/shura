@@ -28,6 +28,12 @@
     },
     {
       "path": "../../packages/ports"
+    },
+    {
+      "path": "../../packages/orchestrator"
+    },
+    {
+      "path": "../../packages/connectors"
     }
   ]
 }

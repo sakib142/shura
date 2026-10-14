@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { assertVerifierGrantsAreReadOnly, isKnownTool } from '@forge/core';
-import { loadAllRoles } from './index.js';
+import { loadAllRoles, withPrompt } from './index.js';
 
 const roles = loadAllRoles();
 
@@ -93,5 +93,34 @@ describe('model identifiers', () => {
       expect(vendor, `${role.id} fallback vendor`).not.toBe(role.model?.runtime);
       expect(KNOWN[vendor ?? ''], `${role.id} fallback`).toContain(model);
     }
+  });
+});
+
+describe('prompt resolution', () => {
+  // Leaving this unresolved sends the model a filename as its entire system
+  // prompt. The agent still runs; it just has no instructions.
+  it('replaces the instructions path with the prompt itself', () => {
+    const role = withPrompt(roles.get('code-reviewer')!);
+    expect(role.instructions).not.toMatch(/^prompts\//);
+    expect(role.instructions).toContain('You cannot edit anything');
+  });
+
+  it('resolves a prompt for every shipped role', () => {
+    for (const role of roles.values()) {
+      expect(() => withPrompt(role), role.id).not.toThrow();
+      expect(withPrompt(role).instructions.length, role.id).toBeGreaterThan(50);
+    }
+  });
+
+  // The reviewer prompt is the single biggest lever on the eval numbers.
+  it('gives the reviewer explicit categories rather than a confidence threshold', () => {
+    const p = withPrompt(roles.get('code-reviewer')!).instructions;
+    expect(p).toContain('## What to report');
+    expect(p).toContain('## What to skip');
+    expect(p).toMatch(/blocker/);
+    // Few-shot examples, including the ambiguous cases.
+    expect(p).toContain('Do not report this');
+    expect(p.toLowerCase()).not.toContain('be conservative');
+    expect(p.toLowerCase()).not.toContain('confidence score');
   });
 });

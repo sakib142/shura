@@ -141,7 +141,7 @@ export class McpToolGateway implements ToolGateway {
       const claim = await store.begin(key, tool, req.taskId, isReclaimable(tool));
 
       if (claim.state === 'completed') {
-        await this.#audit(req, true);
+        await this.#auditQuietly(req);
         return { allowed: true, output: claim.result, replayed: true };
       }
       if (claim.state === 'in_flight') {
@@ -157,6 +157,23 @@ export class McpToolGateway implements ToolGateway {
       }
     }
 
+    // Audit before acting, not after. An action we cannot record must not
+    // happen — and refusing here is safe precisely because nothing has yet.
+    // Auditing afterwards meant a failed insert reported a tool that had
+    // already run as denied, and marked its completed effect as failed.
+    try {
+      await this.#audit(req, true);
+    } catch (err) {
+      return {
+        allowed: false,
+        errorCategory: 'transient',
+        isRetryable: true,
+        denialReason: `refusing to act without an audit record: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
+
     const credentials = await this.#credentials.issue(tool, req.taskId);
 
     try {
@@ -167,7 +184,6 @@ export class McpToolGateway implements ToolGateway {
         agentId: req.agentId,
       });
       if (key !== undefined && store !== undefined) await store.complete(key, output);
-      await this.#audit(req, true);
       return { allowed: true, output };
     } catch (err) {
       // The handler gave control back, so this attempt is over and a retry is
@@ -190,6 +206,15 @@ export class McpToolGateway implements ToolGateway {
       isRetryable: d.retryable,
       denialReason: d.reason,
     };
+  }
+
+  /** A replay performs no new action, so a failed record here must not fail it. */
+  async #auditQuietly(req: ToolCallRequest): Promise<void> {
+    try {
+      await this.#audit(req, true);
+    } catch {
+      /* the original call was already audited */
+    }
   }
 
   async #audit(req: ToolCallRequest, allowed: boolean, d?: Denial): Promise<void> {

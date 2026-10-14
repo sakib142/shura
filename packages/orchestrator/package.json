@@ -1,0 +1,22 @@
+{
+  "name": "@forge/orchestrator",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@forge/connectors": "workspace:*",
+    "@forge/core": "workspace:*",
+    "@forge/db": "workspace:*",
+    "@forge/git": "workspace:*",
+    "@forge/ports": "workspace:*",
+    "@forge/roles": "workspace:*",
+    "@forge/runtimes": "workspace:*",
+    "@forge/sandbox": "workspace:*",
+    "@forge/tool-gateway": "workspace:*",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": { "@types/pg": "^8.11.10", "vitest": "^2.1.8" }
+}

@@ -168,3 +168,33 @@ describe('vendor tool names', () => {
     expect(def).toMatchObject({ id: 'repo.read', name: 'repo_read' });
   });
 });
+
+describe('a null means absent', () => {
+  // OpenAI's strict mode has no way to say "optional" except a nullable type,
+  // so it sends null for an unsupplied optional. A schema that advertises
+  // nullable and then rejects null is lying.
+  it('accepts null for an optional top-level field', () => {
+    expect(() => validateToolArgs('test.run', { filter: null })).not.toThrow();
+  });
+
+  it('accepts null for an optional nested inside an array', () => {
+    const verdict = {
+      artifactId: 'a1',
+      decision: 'PASS',
+      criteria: [{ index: 0, status: 'met', finding: null }],
+      blockedReason: null,
+    };
+    expect(() => validateToolArgs('verdict.submit', verdict)).not.toThrow();
+  });
+
+  it('still rejects a null where a value is genuinely required', () => {
+    expect(() => validateToolArgs('repo.write', { path: null, content: 'x' })).toThrow(
+      ToolArgsInvalid,
+    );
+  });
+
+  it('leaves real values untouched', () => {
+    const out = validateToolArgs('repo.write', { path: 'a.ts', content: 'x' });
+    expect(out).toEqual({ path: 'a.ts', content: 'x' });
+  });
+});

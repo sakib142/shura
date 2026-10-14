@@ -23,6 +23,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@forge/connectors':
+        specifier: workspace:*
+        version: link:../../packages/connectors
       '@forge/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -35,6 +38,9 @@ importers:
       '@forge/model-gateway':
         specifier: workspace:*
         version: link:../../packages/model-gateway
+      '@forge/orchestrator':
+        specifier: workspace:*
+        version: link:../../packages/orchestrator
       '@forge/ports':
         specifier: workspace:*
         version: link:../../packages/ports
@@ -48,6 +54,34 @@ importers:
       tsx:
         specifier: ^4.19.2
         version: 4.23.15
+
+  packages/connectors:
+    dependencies:
+      '@forge/core':
+        specifier: workspace:*
+        version: link:../core
+      '@forge/db':
+        specifier: workspace:*
+        version: link:../db
+      '@forge/git':
+        specifier: workspace:*
+        version: link:../git
+      '@forge/ports':
+        specifier: workspace:*
+        version: link:../ports
+      '@forge/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
+      pg:
+        specifier: ^8.13.1
+        version: 8.23.1
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.23.1
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)
 
   packages/core:
     dependencies:
@@ -96,6 +130,46 @@ importers:
         specifier: workspace:*
         version: link:../core
     devDependencies:
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)
+
+  packages/orchestrator:
+    dependencies:
+      '@forge/connectors':
+        specifier: workspace:*
+        version: link:../connectors
+      '@forge/core':
+        specifier: workspace:*
+        version: link:../core
+      '@forge/db':
+        specifier: workspace:*
+        version: link:../db
+      '@forge/git':
+        specifier: workspace:*
+        version: link:../git
+      '@forge/ports':
+        specifier: workspace:*
+        version: link:../ports
+      '@forge/roles':
+        specifier: workspace:*
+        version: link:../roles
+      '@forge/runtimes':
+        specifier: workspace:*
+        version: link:../runtimes
+      '@forge/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
+      '@forge/tool-gateway':
+        specifier: workspace:*
+        version: link:../tool-gateway
+      pg:
+        specifier: ^8.13.1
+        version: 8.23.1
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.23.1
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)

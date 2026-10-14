@@ -13,6 +13,7 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { digest, stableStringify } from '../hash.js';
+import { VerdictInputSchema } from './verdict.js';
 import type { ToolEffect } from '../vocabulary.js';
 
 /** Context available when deriving an effect key. */
@@ -93,7 +94,7 @@ export const TOOL_CATALOG = {
     effect: 'execute',
     description:
       'Run the test suite in the checked-out repository and return the result. Optionally filter to a subset by name. This executes code but changes nothing, so it is safe to call repeatedly; call it before claiming a criterion is met.',
-    args: z.object({ filter: z.string().max(256).optional() }),
+    args: z.object({ filter: z.string().max(256).nullish() }),
   },
   'tracker.read': {
     effect: 'read',
@@ -139,8 +140,7 @@ export const TOOL_CATALOG = {
     effect: 'write',
     description:
       'Submit the verdict for the artifact under review. This is the only way a verifying role can write anything, and the only way to record a judgment. Every acceptance criterion must be addressed; a criterion marked not_met must carry a finding naming the file, the problem and the evidence. The decision is recomputed from the findings, so declaring PASS while reporting a blocker will be overridden.',
-    // Validated in full by acceptVerdict; this is the envelope check.
-    args: z.object({ artifactId: z.string().min(1) }).passthrough(),
+    args: VerdictInputSchema,
     effectKey: (a: { artifactId: string }, c) => `verdict.submit:${a.artifactId}:${c.taskId}`,
     reclaimable: false,
   },
@@ -175,9 +175,32 @@ export class ToolArgsInvalid extends Error {
   }
 }
 
+/**
+ * Vendors express "this optional was not supplied" as an explicit null, and
+ * OpenAI's strict mode positively requires it — a nullable type is how you say
+ * optional there at all. A schema that advertises nullable and then rejects
+ * null is lying to the model, and it cannot tell the difference between that
+ * and a real mistake.
+ *
+ * So a null is read as absence before validation. None of our tool arguments
+ * carry a meaningful null, which is what makes this safe to do centrally
+ * rather than schema by schema.
+ */
+function nullsAsAbsent(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(nullsAsAbsent);
+  if (typeof value !== 'object' || value === null) return value;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (raw === null) continue;
+    out[key] = nullsAsAbsent(raw);
+  }
+  return out;
+}
+
 /** Parses and returns the narrowed arguments, or throws with every issue named. */
 export function validateToolArgs(tool: ToolName, args: unknown): unknown {
-  const parsed = CATALOG[tool].args.safeParse(args);
+  const parsed = CATALOG[tool].args.safeParse(nullsAsAbsent(args));
   if (!parsed.success) {
     throw new ToolArgsInvalid(
       tool,

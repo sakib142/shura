@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "dist" },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../core" }, { "path": "../ports" }, { "path": "../git" },
+    { "path": "../db" }, { "path": "../roles" }, { "path": "../runtimes" },
+    { "path": "../sandbox" }, { "path": "../tool-gateway" }, { "path": "../connectors" }
+  ]
+}

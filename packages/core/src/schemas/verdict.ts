@@ -43,6 +43,29 @@ export const CriterionVerdictSchema = z
   });
 export type CriterionVerdict = z.infer<typeof CriterionVerdictSchema>;
 
+/**
+ * What a verifier is asked to produce.
+ *
+ * Deliberately excludes `verifier` and `cost`: the platform knows which agent
+ * ran and what it spent, and asking a model to self-report them invites it to
+ * be wrong about its own identity. They are attached on submission instead.
+ */
+export const VerdictInputSchema = z.object({
+  artifactId: z.string().min(1).describe('The artifact under review, as given in the task'),
+  decision: z
+    .enum(DECISIONS)
+    .describe('PASS, CHANGES_REQUESTED, or BLOCKED if you could not reach a verdict'),
+  criteria: z
+    .array(CriterionVerdictSchema)
+    .describe('One entry per acceptance criterion, by index. Every criterion must appear'),
+  extraFindings: z
+    .array(FindingSchema)
+    .default([])
+    .describe('Defects outside the acceptance criteria'),
+  blockedReason: z.string().min(1).optional().describe('Required when the decision is BLOCKED'),
+});
+export type VerdictInput = z.infer<typeof VerdictInputSchema>;
+
 export const VerdictSubmissionSchema = z.object({
   artifactId: z.string().min(1),
   /** What the verifier claims. Advisory only — see resolveDecision. */
@@ -69,9 +92,25 @@ export class VerdictRejected extends Error {
     message: string,
     readonly detail?: unknown,
   ) {
-    super(message);
+    // The detail goes in the message on purpose. This error is returned to the
+    // verifier so it can correct itself, and "failed schema validation" with
+    // the reason hidden in a property it cannot see is not correctable.
+    super(detail === undefined ? message : `${message}: ${describe(detail)}`);
     this.name = 'VerdictRejected';
   }
+}
+
+function describe(detail: unknown): string {
+  if (Array.isArray(detail)) {
+    return detail
+      .map((i) => {
+        const issue = i as { path?: unknown[]; message?: string };
+        const path = Array.isArray(issue.path) ? issue.path.join('.') : '';
+        return `${path === '' ? '(root)' : path} ${issue.message ?? ''}`.trim();
+      })
+      .join('; ');
+  }
+  return typeof detail === 'string' ? detail : JSON.stringify(detail);
 }
 
 /**

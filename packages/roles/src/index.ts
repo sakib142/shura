@@ -16,6 +16,19 @@ export function loadRoleFile(path: string): RoleDefinition {
   return parseRole(parse(readFileSync(path, 'utf8')));
 }
 
+/**
+ * Resolves `instructions` from a path into the prompt itself.
+ *
+ * The role file names a markdown file; the runtime needs its contents. Leaving
+ * this unresolved sends the model the string "prompts/code-reviewer.md" as its
+ * entire system prompt, which fails silently — the agent still runs, just with
+ * no instructions at all.
+ */
+export function withPrompt(role: RoleDefinition, dir: string = DEFINITIONS_DIR): RoleDefinition {
+  const file = join(dir, '..', role.instructions);
+  return { ...role, instructions: readFileSync(file, 'utf8') };
+}
+
 export function loadAllRoles(dir: string = DEFINITIONS_DIR): Map<string, RoleDefinition> {
   const roles = new Map<string, RoleDefinition>();
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.yaml')).sort()) {

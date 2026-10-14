@@ -65,7 +65,7 @@ class OpenAIConversation implements VendorConversation {
       type: 'function',
       name: d.name,
       description: d.description,
-      parameters: d.parameters,
+      parameters: strictSchema(d.parameters),
       strict: true,
     }));
   }
@@ -152,4 +152,52 @@ function parseArguments(raw: string | undefined): unknown {
   } catch {
     return { __unparseable_arguments: raw };
   }
+}
+
+/**
+ * OpenAI's strict mode requires `required` to list every key in `properties`;
+ * an omitted key is a 400, not a permitted optional. Optionality is expressed
+ * by letting the type be null instead.
+ *
+ * Recursive, because the constraint applies at every level. Found twice by real
+ * runs: first on a top-level optional, then — after a partial fix — on an
+ * optional nested two levels down inside an array item. Anthropic accepts the
+ * same schema unchanged, which is why this belongs in the adapter rather than
+ * the shared catalog.
+ */
+export function strictSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  return rewrite(schema) as Record<string, unknown>;
+}
+
+function rewrite(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(rewrite);
+  if (typeof node !== 'object' || node === null) return node;
+
+  const out: Record<string, unknown> = { ...(node as Record<string, unknown>) };
+
+  for (const key of ['items', 'additionalItems', 'not'] as const) {
+    if (out[key] !== undefined) out[key] = rewrite(out[key]);
+  }
+  for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
+    if (Array.isArray(out[key])) out[key] = (out[key] as unknown[]).map(rewrite);
+  }
+
+  const properties = out['properties'];
+  if (typeof properties === 'object' && properties !== null) {
+    const required = new Set(Array.isArray(out['required']) ? (out['required'] as string[]) : []);
+    const rewritten: Record<string, unknown> = {};
+
+    for (const [key, raw] of Object.entries(properties as Record<string, unknown>)) {
+      const prop = rewrite(raw) as Record<string, unknown>;
+      if (!required.has(key) && typeof prop['type'] === 'string') {
+        prop['type'] = [prop['type'], 'null'];
+      }
+      rewritten[key] = prop;
+    }
+
+    out['properties'] = rewritten;
+    out['required'] = Object.keys(properties as Record<string, unknown>);
+  }
+
+  return out;
 }

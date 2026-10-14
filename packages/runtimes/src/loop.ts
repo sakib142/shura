@@ -62,6 +62,16 @@ export interface VendorConversation {
 /** Backstop only — the real stops are `done`, the budget, and the signal. */
 export const MAX_ITERATIONS = 100;
 
+/**
+ * How many times the same call may be denied before the run gives up.
+ *
+ * A model that cannot get past a denial will keep trying, and every attempt
+ * costs tokens. Observed in practice: thirteen identical denied reads, $0.15,
+ * no progress. The loop cap would eventually have caught it; the budget would
+ * have caught it later and more expensively.
+ */
+export const MAX_REPEATED_DENIALS = 3;
+
 export interface LoopOptions {
   readonly vendor: Vendor;
   readonly model: string;
@@ -74,6 +84,7 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncIterable<AgentEvent
   let tokensIn = 0;
   let tokensOut = 0;
   let usd = 0;
+  const denials = new Map<string, number>();
 
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
     if (req.signal.aborted) {
@@ -165,6 +176,20 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncIterable<AgentEvent
         // model can learn it asked for something it may not have, or got the
         // arguments wrong — and a validation denial is explicitly retryable.
         yield { t: 'tool_result', ok: false, denialReason: outcome.denialReason };
+
+        const signature = `${call.name}:${JSON.stringify(call.args)}`;
+        const seen = (denials.get(signature) ?? 0) + 1;
+        denials.set(signature, seen);
+        if (seen >= MAX_REPEATED_DENIALS) {
+          yield {
+            t: 'error',
+            message:
+              `the same call was denied ${seen} times and is not getting through: ` +
+              `${call.name} — ${outcome.denialReason}`,
+          };
+          return;
+        }
+
         results.push({
           id: call.id,
           name: call.name,

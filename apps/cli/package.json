@@ -13,7 +13,9 @@
     "@forge/git": "workspace:*",
     "@forge/model-gateway": "workspace:*",
     "@forge/runtimes": "workspace:*",
-    "@forge/ports": "workspace:*"
+    "@forge/ports": "workspace:*",
+    "@forge/orchestrator": "workspace:*",
+    "@forge/connectors": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2"

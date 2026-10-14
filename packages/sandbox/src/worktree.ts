@@ -95,7 +95,9 @@ export class Worktree {
   resolve(repoRelative: string): string {
     const full = resolve(this.dir, repoRelative);
     const rel = relative(this.dir, full);
-    if (rel === '' || rel.startsWith('..') || rel.startsWith(`..${sep}`) || resolve(rel) === rel) {
+    // rel === '' is the worktree root: inside, not an escape. Whether it is
+    // readable is a different question, answered by the caller.
+    if (rel.startsWith('..') || (rel !== '' && resolve(rel) === rel)) {
       throw new PathEscape(repoRelative);
     }
     return full;
