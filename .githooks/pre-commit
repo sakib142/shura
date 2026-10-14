@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+#
+# Blocks secrets from being committed.
+#
+# .gitignore is advisory: `git add -f .env` defeats it, and so does a key pasted
+# into a source file or a test fixture. This checks what is actually staged.
+#
+# Shared through the repo via core.hooksPath (see scripts/setup-hooks.sh), so it
+# is version-controlled rather than living only on one machine.
+set -euo pipefail
+
+fail=0
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+# 1. Env files, whatever they are named — except the committed template.
+while IFS= read -r f; do
+  case "$f" in
+    .env.example|*/.env.example) continue ;;
+    .env|.env.*|*/.env|*/.env.*)
+      echo "BLOCKED: $f is an environment file and must not be committed." >&2
+      fail=1 ;;
+  esac
+done <<< "$staged"
+
+# 2. Key-shaped content in any staged file, wherever it lives.
+PATTERNS='sk-ant-[A-Za-z0-9_-]{20}|sk-proj-[A-Za-z0-9_-]{20}|sk-[A-Za-z0-9]{32}|AIza[A-Za-z0-9_-]{30}|gh[pousr]_[A-Za-z0-9]{36}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  if git show ":$f" 2>/dev/null | grep -qE "$PATTERNS"; then
+    echo "BLOCKED: $f contains something shaped like a live credential." >&2
+    fail=1
+  fi
+done <<< "$staged"
+
+if [ "$fail" -ne 0 ]; then
+  cat >&2 <<'MSG'
+
+Nothing was committed. Move the value into .env (gitignored) and read it from
+the environment instead.
+
+If this is a false positive — a documented example, a test fixture — re-run with
+  git commit --no-verify
+and say why in the commit message.
+MSG
+  exit 1
+fi
