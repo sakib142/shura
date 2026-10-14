@@ -15,7 +15,9 @@
     "@forge/runtimes": "workspace:*",
     "@forge/ports": "workspace:*",
     "@forge/orchestrator": "workspace:*",
-    "@forge/connectors": "workspace:*"
+    "@forge/connectors": "workspace:*",
+    "@forge/sandbox": "workspace:*",
+    "@forge/fault-corpus": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2"

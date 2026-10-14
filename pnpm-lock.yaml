@@ -32,6 +32,9 @@ importers:
       '@forge/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@forge/fault-corpus':
+        specifier: workspace:*
+        version: link:../../eval/faults
       '@forge/git':
         specifier: workspace:*
         version: link:../../packages/git
@@ -50,10 +53,15 @@ importers:
       '@forge/runtimes':
         specifier: workspace:*
         version: link:../../packages/runtimes
+      '@forge/sandbox':
+        specifier: workspace:*
+        version: link:../../packages/sandbox
     devDependencies:
       tsx:
         specifier: ^4.19.2
         version: 4.23.15
+
+  eval/faults: {}
 
   packages/connectors:
     dependencies:

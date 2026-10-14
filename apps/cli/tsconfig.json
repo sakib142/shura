@@ -34,6 +34,15 @@
     },
     {
       "path": "../../packages/connectors"
+    },
+    {
+      "path": "../../packages/sandbox"
+    },
+    {
+      "path": "../../eval/faults"
+    },
+    {
+      "path": "../../packages/git"
     }
   ]
 }

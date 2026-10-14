@@ -14,6 +14,7 @@ import { hasPricing } from '@forge/model-gateway';
 import { loadAllRoles } from '@forge/roles';
 import { smoke } from './smoke.js';
 import { run } from './run.js';
+import { probe } from './probe.js';
 
 const KEY_ENV: Record<Vendor, string> = {
   anthropic: 'ANTHROPIC_API_KEY',
@@ -128,6 +129,10 @@ const exit = await (command === 'doctor'
       ? smoke(rest[0])
       : command === 'run'
         ? run(rest)
-        : (console.error('usage: forge <doctor|audit --verify|smoke [vendor]|run [ITEM] [--reset]>'),
-           Promise.resolve(2)));
+        : command === 'probe'
+          ? probe(rest)
+          : (console.error(
+               'usage: forge <doctor|audit --verify|smoke [vendor]|run [ITEM] [--reset]|probe [CASE]>',
+             ),
+             Promise.resolve(2)));
 process.exit(exit);
