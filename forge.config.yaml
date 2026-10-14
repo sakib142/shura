@@ -24,7 +24,11 @@ repo:
 
 # Where work items live. "local" keeps them in Postgres and needs no account.
 tracker:
-  type: local
+  type: jira
+  site: https://sakib142.atlassian.net
+  project: KAN
+  emailEnv: JIRA_EMAIL
+  tokenEnv: JIRA_API_TOKEN
 
   # type: jira
   # site: https://your-org.atlassian.net

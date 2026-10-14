@@ -11,7 +11,7 @@
 
 import { join } from 'node:path';
 import { createPool, databaseUrl, isReachable } from '@forge/db';
-import { initRepo } from '@forge/connectors';
+import { JiraTracker, initRepo } from '@forge/connectors';
 import { loadConfig, resolveFrom, type AgentConfig, type ForgeConfig } from '@forge/config';
 import { loadAllRoles, withPrompt } from '@forge/roles';
 import {
@@ -20,7 +20,7 @@ import {
   OpenAICompatibleRuntime,
   OpenAIRuntime,
 } from '@forge/runtimes';
-import type { AgentRuntime } from '@forge/ports';
+import type { AgentRuntime, Tracker } from '@forge/ports';
 import type { RoleDefinition } from '@forge/core';
 import { runWorkItem, type StreamEvent } from '@forge/orchestrator';
 
@@ -147,6 +147,52 @@ export async function run(args: string[]): Promise<number> {
     console.log('reset: cleared prior runs');
   }
 
+  // A Jira-backed project reads the story from Jira and mirrors it locally, so
+  // the rest of the loop works the same either way.
+  let tracker: Tracker | undefined;
+  if (config.tracker.type === 'jira') {
+    const email = process.env[config.tracker.emailEnv] ?? '';
+    const token = process.env[config.tracker.tokenEnv] ?? '';
+    if (email === '' || token === '') {
+      console.error(
+        `tracker is jira but ${config.tracker.emailEnv} or ${config.tracker.tokenEnv} is not set.`,
+      );
+      await pool.end();
+      return 2;
+    }
+    tracker = new JiraTracker({
+      site: config.tracker.site,
+      email,
+      token,
+      project: config.tracker.project,
+      statusMap: config.tracker.statusMap,
+    });
+
+    const item = await tracker.get(key);
+    if (item === undefined) {
+      console.error(`no issue "${key}" in ${config.tracker.site}`);
+      await pool.end();
+      return 1;
+    }
+    if (item.criteria.length === 0) {
+      console.error(
+        `${key} has no acceptance criteria a reviewer could judge against.\n` +
+          'Add lines in Given/When/Then form to the description, for example:\n' +
+          '  Given a status filter, when orders are listed, then only those are returned',
+      );
+      await pool.end();
+      return 1;
+    }
+    await pool.query(
+      `INSERT INTO work_items (key, type, title, acceptance_criteria, state)
+       VALUES ($1, 'story', $2, $3::jsonb, 'draft')
+       ON CONFLICT (key) DO UPDATE
+         SET title = EXCLUDED.title, acceptance_criteria = EXCLUDED.acceptance_criteria`,
+      [item.key, item.title, JSON.stringify(item.criteria)],
+    );
+    console.log(`read ${key} from ${config.tracker.site} — ${item.criteria.length} criteria`);
+  }
+
   const { rows } = await pool.query<{ title: string }>(
     'SELECT title FROM work_items WHERE key = $1',
     [key],
@@ -183,6 +229,7 @@ export async function run(args: string[]): Promise<number> {
       producer: { runtime: runtimeFor(producer.agent), role: producer.role, name: 'dev-01' },
       verifier: { runtime: runtimeFor(verifier.agent), role: verifier.role, name: 'rev-01' },
       loopCap: config.budgets.loop_cap,
+      ...(tracker === undefined ? {} : { tracker }),
       onEvent: render,
     });
 

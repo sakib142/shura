@@ -21,6 +21,8 @@ import {
   type VerifierCandidate,
 } from '@forge/core';
 import type {
+  Tracker,
+  TrackerState,
   AgentEvent,
   AgentRuntime,
   ChangeRequestRef,
@@ -50,6 +52,12 @@ export interface RunOptions {
   readonly verifier: { runtime: AgentRuntime; role: RoleDefinition; name: string };
   readonly loopCap?: number;
   readonly onEvent?: (e: StreamEvent) => void;
+  /**
+   * When present, the work item is read from here and progress is written back.
+   * Forge writes status and commentary only — the tracker owns the story
+   * itself, so there is one writer per field and nothing to reconcile.
+   */
+  readonly tracker?: Tracker;
 }
 
 export interface RunOutcome {
@@ -70,6 +78,28 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
   const audit = new PgAuditSink(opts.pool);
 
   const item = await loadWorkItem(opts.pool, opts.workItemKey);
+
+  /** Best-effort: a tracker that is down must not fail a run that is working. */
+  const note = async (body: string): Promise<void> => {
+    if (opts.tracker === undefined) return;
+    try {
+      await opts.tracker.comment(opts.workItemKey, body);
+    } catch (err) {
+      emit({ kind: 'note', text: `tracker comment failed: ${(err as Error).message}` });
+    }
+  };
+  const move = async (to: TrackerState): Promise<void> => {
+    if (opts.tracker === undefined) return;
+    try {
+      const ok = await opts.tracker.transition(opts.workItemKey, to);
+      emit({
+        kind: 'note',
+        text: ok ? `tracker -> ${to}` : `tracker has no transition to ${to}; left as is`,
+      });
+    } catch (err) {
+      emit({ kind: 'note', text: `tracker transition failed: ${(err as Error).message}` });
+    }
+  };
   const branch = `feature/${opts.workItemKey}`;
   const base = vcs.base;
 
@@ -101,6 +131,7 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
     state = attempt === 1 ? transition(state, 'start_production') : transition(state, 'rework_start');
     emit({ kind: 'phase', state, detail: `${opts.producer.name}  attempt ${attempt}/${cap}` });
 
+    await move('in_progress');
     await vcs.createBranch(base, branch);
     const produceTaskId = await createTask(opts.pool, item.id, 'produce', opts.producer.role.id, attempt);
 
@@ -177,6 +208,12 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
       state,
       detail: `change request opened · ${changed.files.length} file(s) · ${checks.summary}`,
     });
+    await note(
+      `${opts.producer.name} (${opts.producer.role.id}) opened a change request on ${branch}\n` +
+        `${changed.files.length} file(s) changed · ${checks.summary}\n` +
+        `attempt ${attempt} of ${cap}`,
+    );
+    await move('in_review');
 
     /* ------------------------------------------------------------- verify */
     // The one place a verify task is created, so rule 1 cannot be bypassed.
@@ -265,11 +302,19 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
       detail: v.overridden ? `overridden — ${v.reason}` : summarise(v),
     });
 
+    await note(
+      `${chosen.agentId} (${opts.verifier.role.id}, ${chosen.vendor}/${chosen.model}) reviewed it.\n` +
+        `Verdict: ${v.decision}${v.overridden ? ` (rewritten from the findings — ${v.reason})` : ''}\n` +
+        describeFindings(v),
+    );
+
     const next = afterVerdict(v.decision, attempt, cap);
     state = next.next;
 
     if (v.decision !== 'PASS') {
       if (state === 'escalated') {
+        await note(`Escalated: ${cap} attempts were used without a passing verdict. A human is needed.`);
+        await move('blocked');
         return { state, attempts: attempt, reason: `loop cap reached at attempt ${attempt}`, usd };
       }
       priorFindings = v.submission.criteria.filter((c) => c.status === 'not_met');
@@ -283,6 +328,11 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
     if (outcome?.status === 'merged') {
       state = transition(state, 'admission_succeeded');
       emit({ kind: 'phase', state, detail: `merged ${outcome.commit.slice(0, 7)}` });
+      await note(
+        `Merged ${outcome.commit.slice(0, 7)} into ${base} by the merge queue, after rebasing ` +
+          `and re-running the checks.\nTotal cost $${usd.toFixed(4)} across ${attempt} attempt(s).`,
+      );
+      await move('done');
       return { state, attempts: attempt, mergeCommit: outcome.commit, usd };
     }
 
@@ -352,6 +402,14 @@ function limitsOf(role: RoleDefinition): RunLimits {
 
 function criteriaChecklist(criteria: readonly string[]): string {
   return ['## Acceptance criteria', ...criteria.map((c, i) => `- [ ] [${i}] ${c}`)].join('\n');
+}
+
+function describeFindings(v: AcceptedVerdict): string {
+  const unmet = v.submission.criteria.filter((c) => c.status === 'not_met');
+  if (unmet.length === 0) return `All ${v.submission.criteria.length} acceptance criteria are met.`;
+  return unmet
+    .map((c) => `[${c.index}] ${c.finding?.claim ?? 'not met'}\n    evidence: ${c.finding?.evidence ?? ''}`)
+    .join('\n');
 }
 
 function summarise(v: AcceptedVerdict): string {

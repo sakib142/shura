@@ -48,14 +48,14 @@ describe('ADF, both directions', () => {
   });
 
   it('builds a comment Jira will accept', () => {
-    const doc = textToAdf('line one\nline two') as { content: { content?: unknown[] }[] };
+    const doc = textToAdf('line one\nline two') as unknown as { content: { content?: unknown[] }[] };
     expect(doc.content).toHaveLength(2);
     expect(doc.content[0]?.content).toEqual([{ type: 'text', text: 'line one' }]);
   });
 
   // Jira rejects a paragraph carrying an empty content array.
   it('omits the content array for a blank line rather than sending []', () => {
-    const doc = textToAdf('a\n\nb') as { content: { content?: unknown[] }[] };
+    const doc = textToAdf('a\n\nb') as unknown as { content: { content?: unknown[] }[] };
     expect(doc.content[1]).toEqual({ type: 'paragraph' });
   });
 });
