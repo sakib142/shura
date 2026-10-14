@@ -176,27 +176,42 @@ export async function run(args: string[]): Promise<number> {
 
     const item = await tracker.get(key);
     if (item === undefined) {
-      console.error(`no issue "${key}" in ${config.tracker.site}`);
-      await pool.end();
-      return 1;
-    }
-    if (item.criteria.length === 0) {
-      console.error(
-        `${key} has no acceptance criteria a reviewer could judge against.\n` +
-          'Add lines in Given/When/Then form to the description, for example:\n' +
-          '  Given a status filter, when orders are listed, then only those are returned',
+      // Not in Jira. It may still be a local item from `forge submit`, which
+      // is how you try something without creating a ticket for it. Falling
+      // through is friendlier than refusing, as long as it says which it used.
+      const { rows: local } = await pool.query<{ title: string }>(
+        'SELECT title FROM work_items WHERE key = $1',
+        [key],
       );
-      await pool.end();
-      return 1;
+      if (local[0] === undefined) {
+        console.error(
+          `no issue "${key}" in ${config.tracker.site}, and no local work item either.\n` +
+            'Create one in Jira, or locally with:  forge submit <file.md>',
+        );
+        await pool.end();
+        return 1;
+      }
+      console.log(`"${key}" is a local work item (not in Jira) — progress will not be posted`);
+      tracker = undefined;
+    } else {
+      if (item.criteria.length === 0) {
+        console.error(
+          `${key} has no acceptance criteria a reviewer could judge against.\n` +
+            'Add lines in Given/When/Then form to the description, for example:\n' +
+            '  Given a status filter, when orders are listed, then only those are returned',
+        );
+        await pool.end();
+        return 1;
+      }
+      await pool.query(
+        `INSERT INTO work_items (key, type, title, acceptance_criteria, state)
+         VALUES ($1, 'story', $2, $3::jsonb, 'draft')
+         ON CONFLICT (key) DO UPDATE
+           SET title = EXCLUDED.title, acceptance_criteria = EXCLUDED.acceptance_criteria`,
+        [item.key, item.title, JSON.stringify(item.criteria)],
+      );
+      console.log(`read ${key} from ${config.tracker.site} — ${item.criteria.length} criteria`);
     }
-    await pool.query(
-      `INSERT INTO work_items (key, type, title, acceptance_criteria, state)
-       VALUES ($1, 'story', $2, $3::jsonb, 'draft')
-       ON CONFLICT (key) DO UPDATE
-         SET title = EXCLUDED.title, acceptance_criteria = EXCLUDED.acceptance_criteria`,
-      [item.key, item.title, JSON.stringify(item.criteria)],
-    );
-    console.log(`read ${key} from ${config.tracker.site} — ${item.criteria.length} criteria`);
   }
 
   const { rows } = await pool.query<{ title: string }>(
