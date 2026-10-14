@@ -69,7 +69,22 @@ export interface RunOutcome {
 }
 
 export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
-  const emit = opts.onEvent ?? (() => {});
+  const consume = opts.onEvent ?? (() => {});
+
+  // Every event is persisted as well as streamed. A run that only prints to a
+  // terminal leaves nothing to look at afterwards, and nothing for anything
+  // else to watch while it happens.
+  const emit = (e: StreamEvent): void => {
+    consume(e);
+    void opts.pool
+      .query(
+        `INSERT INTO events (work_item_id, type, payload)
+         SELECT id, $2, $3::jsonb FROM work_items WHERE key = $1`,
+        [opts.workItemKey, eventType(e), JSON.stringify(e)],
+      )
+      // Recording must never break a run that is otherwise working.
+      .catch(() => {});
+  };
   const cap = opts.loopCap ?? 3;
   const vcsOpts = { repoDir: opts.repoDir, pool: opts.pool, checkCommand: opts.checkCommand };
   const vcs = new LocalVcs(vcsOpts);
@@ -402,6 +417,12 @@ function limitsOf(role: RoleDefinition): RunLimits {
 
 function criteriaChecklist(criteria: readonly string[]): string {
   return ['## Acceptance criteria', ...criteria.map((c, i) => `- [ ] [${i}] ${c}`)].join('\n');
+}
+
+/** A short, groupable name for the stream. */
+function eventType(e: StreamEvent): string {
+  if (e.kind === 'agent') return `agent.${e.event.t}`;
+  return e.kind;
 }
 
 function describeFindings(v: AcceptedVerdict): string {

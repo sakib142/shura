@@ -18,6 +18,7 @@ import { probe } from './probe.js';
 import { submit } from './submit.js';
 import { init } from './init.js';
 import { design } from './design.js';
+import { watch } from './watch.js';
 import { ConfigInvalid } from '@forge/config';
 
 const KEY_ENV: Record<Vendor, string> = {
@@ -136,6 +137,7 @@ async function dispatch(): Promise<number> {
     case 'submit': return submit(rest);
     case 'init': return init(rest);
     case 'design': return design(rest);
+    case 'watch': return watch(rest);
     default:
       console.error(
         [
@@ -146,6 +148,7 @@ async function dispatch(): Promise<number> {
           '  submit <file.md>           define a work item and its acceptance criteria',
           '  run <ITEM> [--role R]      build it, review it, merge it',
           '  design <extract.json>      a design in, a verified backlog out',
+          '  watch [--port=7777]        live view of agents working, in a browser',
           '  probe [CASE]               measure whether the reviewer catches seeded faults',
           '  smoke [vendor]             one real round-trip per vendor',
           '  audit --verify             check the audit log for tampering',

@@ -18,7 +18,8 @@
     "@forge/connectors": "workspace:*",
     "@forge/sandbox": "workspace:*",
     "@forge/fault-corpus": "workspace:*",
-    "@forge/config": "workspace:*"
+    "@forge/config": "workspace:*",
+    "@forge/api": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2"

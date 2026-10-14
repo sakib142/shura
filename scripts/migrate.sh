@@ -16,8 +16,16 @@ for _ in $(seq 1 40); do
   sleep 1
 done
 
-for f in migrations/*.sql; do
-  echo "applying $f"
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U forge -d forge < "$f"
+docker compose exec -T postgres psql -U forge -d postgres \
+  -c "SELECT 1 FROM pg_database WHERE datname='forge_test'" | grep -q 1 || \
+  docker compose exec -T postgres psql -U forge -d postgres -c "CREATE DATABASE forge_test OWNER forge"
+
+# The same migrations run against both. Tests truncate, so they get their own
+# database rather than sharing the one that holds a real audit trail.
+for db in forge forge_test; do
+  for f in migrations/*.sql; do
+    echo "applying $f -> $db"
+    docker compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U forge -d "$db" < "$f" >/dev/null
+  done
 done
-echo "migrations applied"
+echo "migrations applied to forge and forge_test"

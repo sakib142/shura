@@ -1,0 +1,9 @@
+{
+  "name": "@forge/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/server.ts",
+  "dependencies": { "@forge/db": "workspace:*", "pg": "^8.13.1" },
+  "devDependencies": { "@types/pg": "^8.11.10" }
+}
