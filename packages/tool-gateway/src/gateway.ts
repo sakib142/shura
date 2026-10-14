@@ -19,14 +19,14 @@ import {
   isReclaimable,
   validateToolArgs,
   type ToolName,
-} from '@forge/core';
+} from '@shura/core';
 import type {
   EffectStore,
   ErrorCategory,
   ToolCallRequest,
   ToolCallResult,
   ToolGateway,
-} from '@forge/ports';
+} from '@shura/ports';
 import { checkCall, type ResolvedGrants } from './permissions.js';
 
 export interface ToolCallAudit {

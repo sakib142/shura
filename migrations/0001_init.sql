@@ -1,4 +1,4 @@
--- Forge schema, slice 1.
+-- Shura schema, slice 1.
 --
 -- Two things here are load-bearing rather than cosmetic:
 --
@@ -150,22 +150,22 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 );
 CREATE INDEX IF NOT EXISTS tool_calls_denied_idx ON tool_calls (task_id) WHERE allowed = false;
 
--- The application connects as forge_app, which can append to the audit tables
+-- The application connects as shura_app, which can append to the audit tables
 -- but cannot rewrite them.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'forge_app') THEN
-    CREATE ROLE forge_app LOGIN PASSWORD 'forge_app';
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'shura_app') THEN
+    CREATE ROLE shura_app LOGIN PASSWORD 'shura_app';
   END IF;
 END
 $$;
 
-GRANT USAGE ON SCHEMA public TO forge_app;
+GRANT USAGE ON SCHEMA public TO shura_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON
   work_items, agents, tasks, artifacts, verdicts, claims, approvals, timers, lessons
-  TO forge_app;
-GRANT SELECT, INSERT ON events, tool_calls TO forge_app;
-REVOKE UPDATE, DELETE ON events, tool_calls FROM forge_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO forge_app;
+  TO shura_app;
+GRANT SELECT, INSERT ON events, tool_calls TO shura_app;
+REVOKE UPDATE, DELETE ON events, tool_calls FROM shura_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO shura_app;
 
 COMMIT;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertVerifierGrantsAreReadOnly, isKnownTool } from '@forge/core';
+import { assertVerifierGrantsAreReadOnly, isKnownTool } from '@shura/core';
 import { loadAllRoles, withPrompt } from './index.js';
 
 const roles = loadAllRoles();

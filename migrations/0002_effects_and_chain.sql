@@ -23,7 +23,7 @@ COMMENT ON TABLE effects IS
   'Idempotency keys for side-effecting tool calls. in_flight means a claim nobody '
   'released: the process died mid-effect and whether the effect landed is unknown.';
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON effects TO forge_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON effects TO shura_app;
 
 -- ------------------------------------------------------- hash-chained audit
 
@@ -91,6 +91,6 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION verify_audit_chain(text) TO forge_app;
+GRANT EXECUTE ON FUNCTION verify_audit_chain(text) TO shura_app;
 
 COMMIT;

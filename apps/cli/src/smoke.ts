@@ -11,15 +11,15 @@
  * and read.
  */
 
-import { parseRole, type RoleDefinition, type Vendor } from '@forge/core';
-import type { AgentEvent, RunRequest, ToolCallResult } from '@forge/ports';
+import { parseRole, type RoleDefinition, type Vendor } from '@shura/core';
+import type { AgentEvent, RunRequest, ToolCallResult } from '@shura/ports';
 import {
   AnthropicRuntime,
   GoogleRuntime,
   OpenAICompatibleRuntime,
   OpenAIRuntime,
-} from '@forge/runtimes';
-import type { AgentRuntime } from '@forge/ports';
+} from '@shura/runtimes';
+import type { AgentRuntime } from '@shura/ports';
 
 interface Probe {
   readonly vendor: Vendor;

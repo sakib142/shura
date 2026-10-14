@@ -17,7 +17,7 @@
  * escalates to a human.
  */
 
-import type { EffectClaim, EffectStore } from '@forge/ports';
+import type { EffectClaim, EffectStore } from '@shura/ports';
 
 export const DEFAULT_LEASE_MS = 15 * 60 * 1000;
 

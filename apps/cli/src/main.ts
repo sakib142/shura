@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * forge — the operator surface.
+ * shura — the operator surface.
  *
  * Only the commands M3.5 needs are implemented. `doctor` reports what it
  * *cannot* do rather than failing silently, because a missing vendor key is an
  * answer worth having before a sprint rather than during one.
  */
 
-import { VENDORS, assertCatalogComplete, type Vendor } from '@forge/core';
-import { createPool, databaseUrl, isReachable, verifyAuditChain } from '@forge/db';
-import { tryResolveGit } from '@forge/git';
-import { hasPricing } from '@forge/model-gateway';
-import { loadAllRoles } from '@forge/roles';
+import { VENDORS, assertCatalogComplete, type Vendor } from '@shura/core';
+import { createPool, databaseUrl, isReachable, verifyAuditChain } from '@shura/db';
+import { tryResolveGit } from '@shura/git';
+import { hasPricing } from '@shura/model-gateway';
+import { loadAllRoles } from '@shura/roles';
 import { smoke } from './smoke.js';
 import { run } from './run.js';
 import { probe } from './probe.js';
@@ -19,7 +19,7 @@ import { submit } from './submit.js';
 import { init } from './init.js';
 import { design } from './design.js';
 import { watch } from './watch.js';
-import { ConfigInvalid } from '@forge/config';
+import { ConfigInvalid } from '@shura/config';
 
 const KEY_ENV: Record<Vendor, string> = {
   anthropic: 'ANTHROPIC_API_KEY',
@@ -66,7 +66,7 @@ async function doctor(): Promise<number> {
   const git = tryResolveGit();
   lines.push(
     git === undefined
-      ? no('git: no working binary found — set FORGE_GIT, or `brew install git`')
+      ? no('git: no working binary found — set SHURA_GIT, or `brew install git`')
       : ok(`git: ${git.version} at ${git.path} (via ${git.source})`),
   );
   if (git === undefined) fatal = true;
@@ -105,7 +105,7 @@ async function doctor(): Promise<number> {
 
 async function audit(args: string[]): Promise<number> {
   if (!args.includes('--verify')) {
-    console.error('usage: forge audit --verify');
+    console.error('usage: shura audit --verify');
     return 2;
   }
   const pool = createPool();
@@ -141,9 +141,9 @@ async function dispatch(): Promise<number> {
     default:
       console.error(
         [
-          'usage: forge <command>',
+          'usage: shura <command>',
           '',
-          '  init                       write a starter forge.config.yaml',
+          '  init                       write a starter shura.config.yaml',
           '  doctor                     check everything is wired up',
           '  submit <file.md>           define a work item and its acceptance criteria',
           '  run <ITEM> [--role R]      build it, review it, merge it',

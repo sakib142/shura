@@ -8,9 +8,9 @@
  */
 
 import type { Pool } from 'pg';
-import { acceptVerdict, type AcceptedVerdict, type ToolName } from '@forge/core';
-import type { ToolHandler } from '@forge/tool-gateway';
-import type { Worktree } from '@forge/sandbox';
+import { acceptVerdict, type AcceptedVerdict, type ToolName } from '@shura/core';
+import type { ToolHandler } from '@shura/tool-gateway';
+import type { Worktree } from '@shura/sandbox';
 
 export interface VerifierFacts {
   readonly agent: string;

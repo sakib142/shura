@@ -2,7 +2,7 @@
  * The watch server.
  *
  * One page, one event stream, no build step and no framework. An open-source
- * user should be able to run `forge watch` and have something to look at
+ * user should be able to run `shura watch` and have something to look at
  * without installing a front end toolchain first.
  *
  * It reads the events table and nothing else, so it works while a run is in

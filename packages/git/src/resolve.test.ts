@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { GitNotFound, clearGitCache, resolveGit, tryResolveGit } from './resolve.js';
 
 afterEach(() => {
-  delete process.env.FORGE_GIT;
+  delete process.env.SHURA_GIT;
   clearGitCache();
 });
 
@@ -15,13 +15,13 @@ describe('resolving git', () => {
   // The whole point: /usr/bin/git exists on this machine and does not run.
   // Existence is not evidence, so every candidate is executed.
   it('rejects a binary that exists but does not work', () => {
-    process.env.FORGE_GIT = '/bin/ls';
+    process.env.SHURA_GIT = '/bin/ls';
     clearGitCache();
     expect(() => resolveGit({ refresh: true })).toThrow(GitNotFound);
   });
 
   it('rejects a path that is not there at all', () => {
-    process.env.FORGE_GIT = '/nonexistent/git';
+    process.env.SHURA_GIT = '/nonexistent/git';
     clearGitCache();
     expect(() => resolveGit({ refresh: true })).toThrow(GitNotFound);
   });
@@ -29,7 +29,7 @@ describe('resolving git', () => {
   // An operator who names a binary means that binary; silently using another
   // would run their agents against a git they did not choose.
   it('does not fall back when an explicit override fails', () => {
-    process.env.FORGE_GIT = '/bin/ls';
+    process.env.SHURA_GIT = '/bin/ls';
     clearGitCache();
     try {
       resolveGit({ refresh: true });
@@ -40,13 +40,13 @@ describe('resolving git', () => {
   });
 
   it('names everything it tried when it finds nothing', () => {
-    process.env.FORGE_GIT = '/nonexistent/git';
+    process.env.SHURA_GIT = '/nonexistent/git';
     clearGitCache();
-    expect(() => resolveGit({ refresh: true })).toThrow(/Set FORGE_GIT/);
+    expect(() => resolveGit({ refresh: true })).toThrow(/Set SHURA_GIT/);
   });
 
   it('tryResolveGit reports absence rather than throwing', () => {
-    process.env.FORGE_GIT = '/bin/ls';
+    process.env.SHURA_GIT = '/bin/ls';
     clearGitCache();
     expect(tryResolveGit()).toBeUndefined();
   });

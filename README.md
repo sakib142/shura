@@ -1,8 +1,12 @@
-# Forge
+# Shura — شورى
 
-A platform where an agent's output is never admitted on its own word. A
-different agent, running a **different vendor's model**, verifies it, and
-admission follows from that verdict.
+*Shura* is consultation: deciding together rather than alone. No single party's
+word settles a matter.
+
+That is the whole design. An agent's output is never admitted on its own word —
+a different agent, running a **different vendor's model**, verifies it, and
+admission follows from that verdict. The platform refuses to schedule a review
+where producer and reviewer share a vendor, before a token is spent.
 
 ## Running it
 
@@ -19,12 +23,12 @@ refused, so one key produces no valid producer/verifier pairing at all.
 
 | Command | What it does | Cost |
 | --- | --- | --- |
-| `pnpm forge doctor` | Checks Postgres, git, the audit chain, the tool catalog, the roles, and which vendor pairs your keys allow | free |
+| `pnpm shura doctor` | Checks Postgres, git, the audit chain, the tool catalog, the roles, and which vendor pairs your keys allow | free |
 | `pnpm test` | 216 unit and integration tests | free |
-| `pnpm forge smoke` | One real tool-calling round-trip per configured vendor. Proves the adapters work against the live APIs | ~$0.01 |
-| `pnpm forge run ORD-12 --reset` | The whole loop: an agent builds a feature, a different-vendor agent reviews it, a merge queue merges it | ~$0.25 |
-| `pnpm forge probe` | Seeds known faults that pass the test suite and measures whether the reviewer catches them | ~$0.12 |
-| `pnpm forge audit --verify` | Walks the hash-chained audit log for tampering | free |
+| `pnpm shura smoke` | One real tool-calling round-trip per configured vendor. Proves the adapters work against the live APIs | ~$0.01 |
+| `pnpm shura run ORD-12 --reset` | The whole loop: an agent builds a feature, a different-vendor agent reviews it, a merge queue merges it | ~$0.25 |
+| `pnpm shura probe` | Seeds known faults that pass the test suite and measures whether the reviewer catches them | ~$0.12 |
+| `pnpm shura audit --verify` | Walks the hash-chained audit log for tampering | free |
 
 ### Checking the work afterwards
 
@@ -32,26 +36,26 @@ refused, so one key produces no valid producer/verifier pairing at all.
 GIT=/Library/Developer/CommandLineTools/usr/bin/git   # or just `git` if yours works
 
 # What was merged, and by whom
-$GIT -C .forge/target.git log --format='%h %an %s' main
+$GIT -C .shura/target.git log --format='%h %an %s' main
 
 # What the agent actually wrote
-$GIT -C .forge/target.git diff main~1 main
+$GIT -C .shura/target.git diff main~1 main
 
 # Do the merged tests pass, independently of the agents?
-$GIT -C .forge/target.git worktree add -q /tmp/check main
+$GIT -C .shura/target.git worktree add -q /tmp/check main
 (cd /tmp/check && node --test --experimental-strip-types test/orders.test.ts)
-$GIT -C .forge/target.git worktree remove --force /tmp/check
+$GIT -C .shura/target.git worktree remove --force /tmp/check
 ```
 
 ```bash
 # The verdict, with full attribution (rule 4)
-docker compose exec -T postgres psql -U forge -d forge -x -c \
+docker compose exec -T postgres psql -U shura -d shura -x -c \
   "SELECT decision, overridden, producer_vendor, producer_model,
           verifier_vendor, verifier_model, cost_usd
      FROM verdicts ORDER BY created_at DESC LIMIT 1;"
 
 # Every tool call, allowed and denied
-docker compose exec -T postgres psql -U forge -d forge -c \
+docker compose exec -T postgres psql -U shura -d shura -c \
   "SELECT agent_id, tool, allowed, denial_reason FROM tool_calls ORDER BY id;"
 ```
 

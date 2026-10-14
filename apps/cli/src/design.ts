@@ -1,5 +1,5 @@
 /**
- * `forge design` — a design extract in, a verified backlog out.
+ * `shura design` — a design extract in, a verified backlog out.
  *
  * The producer proposes; a verifier on a different vendor judges against the
  * Definition of Ready; only a passing verdict creates anything in the tracker.
@@ -7,12 +7,12 @@
  * the agent that proposed them.
  */
 
-import { createPool, isReachable } from '@forge/db';
-import { FigmaExtractSource, JiraTracker, renderExtract, textToAdf } from '@forge/connectors';
-import { loadConfig } from '@forge/config';
-import { loadAllRoles, withPrompt } from '@forge/roles';
-import { designToBacklog, renderProposal, type Proposal } from '@forge/orchestrator';
-import type { AgentEvent } from '@forge/ports';
+import { createPool, isReachable } from '@shura/db';
+import { FigmaExtractSource, JiraTracker, renderExtract, textToAdf } from '@shura/connectors';
+import { loadConfig } from '@shura/config';
+import { loadAllRoles, withPrompt } from '@shura/roles';
+import { designToBacklog, renderProposal, type Proposal } from '@shura/orchestrator';
+import type { AgentEvent } from '@shura/ports';
 import { configuredRole, runtimeFor } from './run.js';
 
 function stamp(): string {
@@ -40,7 +40,7 @@ export async function design(args: string[]): Promise<number> {
   const extractPath = args.find((a) => !a.startsWith('--') && a.endsWith('.json'));
 
   if (extractPath === undefined) {
-    console.error('usage: forge design <extract.json> [--create] [--dry-run]');
+    console.error('usage: shura design <extract.json> [--create] [--dry-run]');
     console.error('\n  --create   write the accepted stories to the tracker');
     return 2;
   }
@@ -52,7 +52,7 @@ export async function design(args: string[]): Promise<number> {
   if (producer.agent.runtime === verifier.agent.runtime) {
     console.error(
       `backlog-author and backlog-reviewer are both on "${producer.agent.runtime}".\n` +
-        'A verifier must run a different vendor. Change one in forge.config.yaml under `agents`.',
+        'A verifier must run a different vendor. Change one in shura.config.yaml under `agents`.',
     );
     return 2;
   }

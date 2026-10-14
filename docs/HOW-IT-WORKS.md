@@ -3,7 +3,7 @@
 One command, traced through the files that handle it.
 
 ```bash
-pnpm forge run KAN-7 --role frontend-developer
+pnpm shura run KAN-7 --role frontend-developer
 ```
 
 There is no "agent program" anywhere in this codebase. An agent is **a role
@@ -17,7 +17,7 @@ is ordinary code deciding what that model is allowed to do next.
 `package.json:16`
 
 ```json
-"forge": "node --env-file-if-exists=.env --import tsx apps/cli/src/main.ts"
+"shura": "node --env-file-if-exists=.env --import tsx apps/cli/src/main.ts"
 ```
 
 `--env-file-if-exists` loads `.env` into the environment. No code reads that

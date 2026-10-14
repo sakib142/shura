@@ -23,7 +23,7 @@ importers:
 
   apps/api:
     dependencies:
-      '@forge/db':
+      '@shura/db':
         specifier: workspace:*
         version: link:../../packages/db
       pg:
@@ -36,43 +36,43 @@ importers:
 
   apps/cli:
     dependencies:
-      '@forge/api':
+      '@shura/api':
         specifier: workspace:*
         version: link:../api
-      '@forge/config':
+      '@shura/config':
         specifier: workspace:*
         version: link:../../packages/config
-      '@forge/connectors':
+      '@shura/connectors':
         specifier: workspace:*
         version: link:../../packages/connectors
-      '@forge/core':
+      '@shura/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@forge/db':
+      '@shura/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@forge/fault-corpus':
+      '@shura/fault-corpus':
         specifier: workspace:*
         version: link:../../eval/faults
-      '@forge/git':
+      '@shura/git':
         specifier: workspace:*
         version: link:../../packages/git
-      '@forge/model-gateway':
+      '@shura/model-gateway':
         specifier: workspace:*
         version: link:../../packages/model-gateway
-      '@forge/orchestrator':
+      '@shura/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
-      '@forge/ports':
+      '@shura/ports':
         specifier: workspace:*
         version: link:../../packages/ports
-      '@forge/roles':
+      '@shura/roles':
         specifier: workspace:*
         version: link:../../packages/roles
-      '@forge/runtimes':
+      '@shura/runtimes':
         specifier: workspace:*
         version: link:../../packages/runtimes
-      '@forge/sandbox':
+      '@shura/sandbox':
         specifier: workspace:*
         version: link:../../packages/sandbox
     devDependencies:
@@ -114,7 +114,7 @@ importers:
 
   packages/config:
     dependencies:
-      '@forge/core':
+      '@shura/core':
         specifier: workspace:*
         version: link:../core
       yaml:
@@ -130,19 +130,19 @@ importers:
 
   packages/connectors:
     dependencies:
-      '@forge/core':
+      '@shura/core':
         specifier: workspace:*
         version: link:../core
-      '@forge/db':
+      '@shura/db':
         specifier: workspace:*
         version: link:../db
-      '@forge/git':
+      '@shura/git':
         specifier: workspace:*
         version: link:../git
-      '@forge/ports':
+      '@shura/ports':
         specifier: workspace:*
         version: link:../ports
-      '@forge/sandbox':
+      '@shura/sandbox':
         specifier: workspace:*
         version: link:../sandbox
       pg:
@@ -171,13 +171,13 @@ importers:
 
   packages/db:
     dependencies:
-      '@forge/core':
+      '@shura/core':
         specifier: workspace:*
         version: link:../core
-      '@forge/ports':
+      '@shura/ports':
         specifier: workspace:*
         version: link:../ports
-      '@forge/tool-gateway':
+      '@shura/tool-gateway':
         specifier: workspace:*
         version: link:../tool-gateway
       pg:
@@ -199,7 +199,7 @@ importers:
 
   packages/model-gateway:
     dependencies:
-      '@forge/core':
+      '@shura/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -209,31 +209,31 @@ importers:
 
   packages/orchestrator:
     dependencies:
-      '@forge/connectors':
+      '@shura/connectors':
         specifier: workspace:*
         version: link:../connectors
-      '@forge/core':
+      '@shura/core':
         specifier: workspace:*
         version: link:../core
-      '@forge/db':
+      '@shura/db':
         specifier: workspace:*
         version: link:../db
-      '@forge/git':
+      '@shura/git':
         specifier: workspace:*
         version: link:../git
-      '@forge/ports':
+      '@shura/ports':
         specifier: workspace:*
         version: link:../ports
-      '@forge/roles':
+      '@shura/roles':
         specifier: workspace:*
         version: link:../roles
-      '@forge/runtimes':
+      '@shura/runtimes':
         specifier: workspace:*
         version: link:../runtimes
-      '@forge/sandbox':
+      '@shura/sandbox':
         specifier: workspace:*
         version: link:../sandbox
-      '@forge/tool-gateway':
+      '@shura/tool-gateway':
         specifier: workspace:*
         version: link:../tool-gateway
       pg:
@@ -249,13 +249,13 @@ importers:
 
   packages/ports:
     dependencies:
-      '@forge/core':
+      '@shura/core':
         specifier: workspace:*
         version: link:../core
 
   packages/roles:
     dependencies:
-      '@forge/core':
+      '@shura/core':
         specifier: workspace:*
         version: link:../core
       yaml:
@@ -271,18 +271,18 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.133.0
         version: 0.133.0(zod@3.25.76)
-      '@forge/core':
-        specifier: workspace:*
-        version: link:../core
-      '@forge/model-gateway':
-        specifier: workspace:*
-        version: link:../model-gateway
-      '@forge/ports':
-        specifier: workspace:*
-        version: link:../ports
       '@google/genai':
         specifier: ^2.29.1
         version: 2.29.1
+      '@shura/core':
+        specifier: workspace:*
+        version: link:../core
+      '@shura/model-gateway':
+        specifier: workspace:*
+        version: link:../model-gateway
+      '@shura/ports':
+        specifier: workspace:*
+        version: link:../ports
       openai:
         specifier: ^7.33.0
         version: 7.33.0(ws@8.22.0)(zod@3.25.76)
@@ -293,13 +293,13 @@ importers:
 
   packages/sandbox:
     dependencies:
-      '@forge/core':
+      '@shura/core':
         specifier: workspace:*
         version: link:../core
-      '@forge/git':
+      '@shura/git':
         specifier: workspace:*
         version: link:../git
-      '@forge/ports':
+      '@shura/ports':
         specifier: workspace:*
         version: link:../ports
     devDependencies:
@@ -309,10 +309,10 @@ importers:
 
   packages/tool-gateway:
     dependencies:
-      '@forge/core':
+      '@shura/core':
         specifier: workspace:*
         version: link:../core
-      '@forge/ports':
+      '@shura/ports':
         specifier: workspace:*
         version: link:../ports
     devDependencies:

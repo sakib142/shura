@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertDistinctVendor, InvariantViolation } from '@forge/core';
+import { assertDistinctVendor, InvariantViolation } from '@shura/core';
 import { contractRequest, drain, runtimeContract } from './contract.js';
 import { FakeRuntime, overreachingVerifierScript, producerScript, verifierScript } from './fake.js';
 

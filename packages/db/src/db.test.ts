@@ -1,8 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
-import { parseRole, type ToolName } from '@forge/core';
-import type { ToolCallRequest } from '@forge/ports';
-import { McpToolGateway, resolveGrants, type ToolHandler } from '@forge/tool-gateway';
+import { parseRole, type ToolName } from '@shura/core';
+import type { ToolCallRequest } from '@shura/ports';
+import { McpToolGateway, resolveGrants, type ToolHandler } from '@shura/tool-gateway';
 import { PgEffectStore } from './effects.js';
 import { PgAuditSink, verifyAuditChain } from './audit.js';
 import { createPool, isReachable } from './pool.js';
@@ -17,7 +17,7 @@ if (!up) {
 
 afterAll(async () => {
   // These tests deliberately tamper with audit rows. Left behind, they would
-  // make `forge doctor` report a broken chain on a perfectly healthy install.
+  // make `shura doctor` report a broken chain on a perfectly healthy install.
   if (up) {
     await pool.query('TRUNCATE tool_calls RESTART IDENTITY');
     await pool.query('TRUNCATE events RESTART IDENTITY');

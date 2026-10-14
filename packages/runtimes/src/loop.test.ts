@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentEvent, ToolCallResult } from '@forge/ports';
+import type { AgentEvent, ToolCallResult } from '@shura/ports';
 import { runAgentLoop, MAX_ITERATIONS, type VendorConversation, type VendorTurn } from './loop.js';
 import { contractRequest, drain } from './contract.js';
 

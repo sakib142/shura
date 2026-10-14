@@ -13,9 +13,9 @@
 import { cp, mkdir, rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import type { Pool } from 'pg';
-import { Git, agentIdentity } from '@forge/git';
-import { Worktree } from '@forge/sandbox';
-import type { ChangeRequestRef, CheckRun, Diff, MergeOutcome, MergeQueue, Vcs } from '@forge/ports';
+import { Git, agentIdentity } from '@shura/git';
+import { Worktree } from '@shura/sandbox';
+import type { ChangeRequestRef, CheckRun, Diff, MergeOutcome, MergeQueue, Vcs } from '@shura/ports';
 
 export interface LocalVcsOptions {
   /** The bare repository every branch and merge lands in. */
@@ -255,7 +255,7 @@ export async function initRepo(repoDirInput: string, seedFromInput: string): Pro
   const staging = `${repoDir}.seed`;
   await rm(staging, { recursive: true, force: true });
 
-  const identity = agentIdentity('forge', 'bootstrap', 'none');
+  const identity = agentIdentity('shura', 'bootstrap', 'none');
   await new Git(join(repoDir, '..'), identity).run('clone', '-q', repoDir, staging);
 
   await cp(seedFrom, staging, {

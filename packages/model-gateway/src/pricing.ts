@@ -10,7 +10,7 @@
  * announces itself. Prices checked against vendor documentation on 2026-10-14.
  */
 
-import type { Vendor } from '@forge/core';
+import type { Vendor } from '@shura/core';
 
 export interface TokenPrice {
   readonly inputPerMTok: number;

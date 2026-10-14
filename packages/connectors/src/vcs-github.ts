@@ -9,9 +9,9 @@
  * under its own credential, and is not reachable from anything an agent holds.
  */
 
-import { Git, agentIdentity } from '@forge/git';
-import { Worktree } from '@forge/sandbox';
-import type { ChangeRequestRef, CheckRun, Diff, MergeOutcome, MergeQueue, Vcs } from '@forge/ports';
+import { Git, agentIdentity } from '@shura/git';
+import { Worktree } from '@shura/sandbox';
+import type { ChangeRequestRef, CheckRun, Diff, MergeOutcome, MergeQueue, Vcs } from '@shura/ports';
 
 export interface GitHubOptions {
   readonly owner: string;

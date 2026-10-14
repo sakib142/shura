@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 
-export const DEFAULT_DATABASE_URL = 'postgres://forge:forge@localhost:5440/forge';
+export const DEFAULT_DATABASE_URL = 'postgres://shura:shura@localhost:5440/shura';
 
 /**
  * The test database is a different database, not a different table prefix.
@@ -9,7 +9,7 @@ export const DEFAULT_DATABASE_URL = 'postgres://forge:forge@localhost:5440/forge
  * permanent. Sharing one database means `pnpm test` quietly destroys the record
  * of work that actually happened — which it did, once, before this existed.
  */
-export const TEST_DATABASE_URL = 'postgres://forge:forge@localhost:5440/forge_test';
+export const TEST_DATABASE_URL = 'postgres://shura:shura@localhost:5440/shura_test';
 
 export function databaseUrl(): string {
   return process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL;

@@ -1,5 +1,5 @@
 /**
- * forge.config.yaml — everything the loop used to hardcode.
+ * shura.config.yaml — everything the loop used to hardcode.
  *
  * Two principles, both of which matter more for an open-source project than
  * for one team's internal tool:
@@ -14,7 +14,7 @@
  */
 
 import { z } from 'zod';
-import { VENDORS } from '@forge/core';
+import { VENDORS } from '@shura/core';
 
 const Command = z.array(z.string().min(1)).min(1);
 

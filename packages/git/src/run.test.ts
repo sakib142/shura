@@ -6,7 +6,7 @@ import { Git, GitError, agentIdentity } from './run.js';
 
 const dirs: string[] = [];
 function workspace(): string {
-  const d = mkdtempSync(join(tmpdir(), 'forge-git-'));
+  const d = mkdtempSync(join(tmpdir(), 'shura-git-'));
   dirs.push(d);
   return d;
 }
@@ -26,20 +26,20 @@ describe('running git', () => {
     await git.run('commit', '-q', '-m', 'first');
 
     const { stdout } = await git.run('log', '--format=%an <%ae>', '-1');
-    expect(stdout.trim()).toBe('dev-01 (backend-developer) <dev-01+claude-sonnet-5@agents.forge.local>');
+    expect(stdout.trim()).toBe('dev-01 (backend-developer) <dev-01+claude-sonnet-5@agents.shura.local>');
   });
 
   // An agent commit authored by whoever owns the laptop makes the trail useless.
   it('ignores the machine git config entirely', async () => {
     const dir = workspace();
-    const git = new Git(dir, { name: 'rev-01 (code-reviewer)', email: 'rev-01@agents.forge.local' });
+    const git = new Git(dir, { name: 'rev-01 (code-reviewer)', email: 'rev-01@agents.shura.local' });
     await git.run('init', '-q', '-b', 'main', '.');
     writeFileSync(join(dir, 'a.txt'), 'x');
     await git.run('add', 'a.txt');
     await git.run('commit', '-q', '-m', 'c');
     const { stdout } = await git.run('log', '--format=%ae', '-1');
     expect(stdout.trim()).not.toContain('sakib');
-    expect(stdout.trim()).toContain('agents.forge.local');
+    expect(stdout.trim()).toContain('agents.shura.local');
   });
 
   it('throws with the command and stderr when git fails', async () => {

@@ -12,10 +12,10 @@ afterEach(() => {
 });
 
 function withConfig(yaml: string): string {
-  const dir = mkdtempSync(join(tmpdir(), 'forge-cfg-'));
+  const dir = mkdtempSync(join(tmpdir(), 'shura-cfg-'));
   dirs.push(dir);
-  writeFileSync(join(dir, 'forge.config.yaml'), yaml);
-  return join(dir, 'forge.config.yaml');
+  writeFileSync(join(dir, 'shura.config.yaml'), yaml);
+  return join(dir, 'shura.config.yaml');
 }
 
 const MINIMAL = `
@@ -49,7 +49,7 @@ describe('loading', () => {
   });
 
   it('says what to do when there is no config at all', () => {
-    expect(() => loadConfig(join(tmpdir(), 'nope', 'forge.config.yaml'))).toThrow(/forge init/);
+    expect(() => loadConfig(join(tmpdir(), 'nope', 'shura.config.yaml'))).toThrow(/shura init/);
   });
 });
 

@@ -1,5 +1,5 @@
 {
-  "name": "@forge/sandbox",
+  "name": "@shura/sandbox",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,9 +7,9 @@
   "types": "./src/index.ts",
   "exports": { ".": "./src/index.ts" },
   "dependencies": {
-    "@forge/core": "workspace:*",
-    "@forge/git": "workspace:*",
-    "@forge/ports": "workspace:*"
+    "@shura/core": "workspace:*",
+    "@shura/git": "workspace:*",
+    "@shura/ports": "workspace:*"
   },
   "devDependencies": { "vitest": "^2.1.8" }
 }

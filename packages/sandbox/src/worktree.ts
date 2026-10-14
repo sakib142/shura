@@ -21,7 +21,7 @@ import { mkdtemp, rm, mkdir, readFile, writeFile, chmod } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { Git, type GitIdentity } from '@forge/git';
+import { Git, type GitIdentity } from '@shura/git';
 
 const exec = promisify(execFile);
 
@@ -70,7 +70,7 @@ export class Worktree {
   }
 
   static async create(opts: WorktreeOptions): Promise<Worktree> {
-    const dir = await mkdtemp(join(tmpdir(), `forge-wt-${opts.taskId.slice(0, 8)}-`));
+    const dir = await mkdtemp(join(tmpdir(), `shura-wt-${opts.taskId.slice(0, 8)}-`));
     const repo = new Git(opts.repoDir);
     await repo.run('worktree', 'add', '--force', dir, opts.branch);
 
@@ -157,7 +157,7 @@ export class Worktree {
     await writeFile(
       hook,
       `#!/bin/sh
-# Installed by the Forge sandbox. A task may push only branches it claimed.
+# Installed by the Shura sandbox. A task may push only branches it claimed.
 allowed='
 ${list}
 '

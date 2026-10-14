@@ -6,7 +6,7 @@
  * confidence threshold in prose does nothing a schema cannot do better.
  */
 
-import type { RunRequest } from '@forge/ports';
+import type { RunRequest } from '@shura/ports';
 
 export function systemPrompt(req: RunRequest): string {
   const { role, context } = req;

@@ -13,8 +13,8 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { toolDefinitions, type Vendor } from '@forge/core';
-import type { AgentEvent, AgentRuntime, RunRequest } from '@forge/ports';
+import { toolDefinitions, type Vendor } from '@shura/core';
+import type { AgentEvent, AgentRuntime, RunRequest } from '@shura/ports';
 import { runAgentLoop, type VendorConversation, type VendorTurn } from './loop.js';
 import { systemPrompt, userPrompt } from './prompt.js';
 

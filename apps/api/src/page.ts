@@ -3,7 +3,7 @@ export const PAGE = String.raw`<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Forge — agents at work</title>
+<title>Shura — agents at work</title>
 <style>
   :root {
     --bg: #0f1115; --panel: #161920; --line: #262b36; --text: #e6e8ee;
@@ -47,7 +47,7 @@ export const PAGE = String.raw`<!doctype html>
 </head>
 <body>
 <header>
-  <h1><span class="dot"></span>Forge</h1>
+  <h1><span class="dot"></span>Shura</h1>
   <select id="runs"><option value="">all runs</option></select>
   <span class="muted" id="where"></span>
   <div id="stats">
@@ -56,7 +56,7 @@ export const PAGE = String.raw`<!doctype html>
     <span class="muted">spent <b id="usd">$0.0000</b></span>
   </div>
 </header>
-<main><div id="log"><p class="idle">Waiting for a run. Start one with <b>forge run &lt;ITEM&gt;</b> in another terminal.</p></div></main>
+<main><div id="log"><p class="idle">Waiting for a run. Start one with <b>shura run &lt;ITEM&gt;</b> in another terminal.</p></div></main>
 
 <script type="module">
 const log = document.getElementById('log');

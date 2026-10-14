@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { parseRole, type ToolName } from '@forge/core';
-import type { ToolCallRequest, ToolCallResult } from '@forge/ports';
+import { parseRole, type ToolName } from '@shura/core';
+import type { ToolCallRequest, ToolCallResult } from '@shura/ports';
 import {
   InMemoryAuditSink,
   McpToolGateway,

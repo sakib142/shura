@@ -2,16 +2,16 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Git, agentIdentity } from '@forge/git';
+import { Git, agentIdentity } from '@shura/git';
 import { PathEscape, Worktree } from './worktree.js';
 
 const dirs: string[] = [];
 const trees: Worktree[] = [];
 
 async function repoWithCommit(): Promise<string> {
-  const dir = mkdtempSync(join(tmpdir(), 'forge-repo-'));
+  const dir = mkdtempSync(join(tmpdir(), 'shura-repo-'));
   dirs.push(dir);
-  const git = new Git(dir, { name: 'seed', email: 'seed@forge.local' });
+  const git = new Git(dir, { name: 'seed', email: 'seed@shura.local' });
   await git.run('init', '-q', '-b', 'main', '.');
   writeFileSync(join(dir, 'a.txt'), 'original\n');
   await git.run('add', 'a.txt');
@@ -110,7 +110,7 @@ describe('the push guard', () => {
     });
     trees.push(wt);
 
-    const bare = mkdtempSync(join(tmpdir(), 'forge-bare-'));
+    const bare = mkdtempSync(join(tmpdir(), 'shura-bare-'));
     dirs.push(bare);
     await new Git(bare).run('init', '-q', '--bare', '.');
     await wt.git.run('remote', 'add', 'origin', bare);
@@ -131,7 +131,7 @@ describe('the push guard', () => {
     });
     trees.push(wt);
 
-    const bare = mkdtempSync(join(tmpdir(), 'forge-bare-'));
+    const bare = mkdtempSync(join(tmpdir(), 'shura-bare-'));
     dirs.push(bare);
     await new Git(bare).run('init', '-q', '--bare', '.');
     await wt.git.run('remote', 'add', 'origin', bare);

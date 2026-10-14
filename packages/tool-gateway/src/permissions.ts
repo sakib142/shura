@@ -13,7 +13,7 @@ import {
   type RoleDefinition,
   type TaskKind,
   type ToolName,
-} from '@forge/core';
+} from '@shura/core';
 
 export interface ResolvedGrants {
   readonly roleId: string;

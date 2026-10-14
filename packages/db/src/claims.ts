@@ -12,7 +12,7 @@
  */
 
 import type { Pool } from 'pg';
-import { overlappingGlobs } from '@forge/core';
+import { overlappingGlobs } from '@shura/core';
 
 export interface ClaimRequest {
   readonly agentId: string;

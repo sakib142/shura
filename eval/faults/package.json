@@ -1,5 +1,5 @@
 {
-  "name": "@forge/fault-corpus",
+  "name": "@shura/fault-corpus",
   "version": "0.0.0",
   "private": true,
   "type": "module",

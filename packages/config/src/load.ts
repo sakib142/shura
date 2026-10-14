@@ -1,5 +1,5 @@
 /**
- * Loading and validating forge.config.yaml.
+ * Loading and validating shura.config.yaml.
  *
  * Error messages are part of the product here. A newcomer's first encounter
  * with this project is likely to be a config they got slightly wrong, and
@@ -11,7 +11,7 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { parse } from 'yaml';
 import { ForgeConfigSchema, type ForgeConfig } from './schema.js';
 
-export const CONFIG_FILENAME = 'forge.config.yaml';
+export const CONFIG_FILENAME = 'shura.config.yaml';
 
 export class ConfigInvalid extends Error {
   constructor(
@@ -74,13 +74,13 @@ export function loadConfig(path?: string): LoadedConfig {
   if (file === undefined) {
     throw new ConfigInvalid(CONFIG_FILENAME, [
       'no config found in this directory or any parent.',
-      'Run `forge init` to create one.',
+      'Run `shura init` to create one.',
     ]);
   }
   // An explicitly named file that is not there deserves the same answer as one
   // that could not be found by searching, not a raw ENOENT from readFileSync.
   if (!existsSync(file)) {
-    throw new ConfigInvalid(file, ['no such file.', 'Run `forge init` to create one.']);
+    throw new ConfigInvalid(file, ['no such file.', 'Run `shura init` to create one.']);
   }
 
   const text = readFileSync(file, 'utf8');
@@ -123,7 +123,7 @@ export interface MissingCredential {
 /**
  * Which named credentials are not actually set.
  *
- * Reported rather than thrown: `forge doctor` should be able to say what is
+ * Reported rather than thrown: `shura doctor` should be able to say what is
  * missing without refusing to run at all.
  */
 export function missingCredentials(config: ForgeConfig): MissingCredential[] {

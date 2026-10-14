@@ -13,9 +13,9 @@
  * pathological loop, never the primary stop.
  */
 
-import type { AgentEvent, RunRequest, ToolInvoker } from '@forge/ports';
-import { costOf } from '@forge/model-gateway';
-import { internalToolName, type Vendor } from '@forge/core';
+import type { AgentEvent, RunRequest, ToolInvoker } from '@shura/ports';
+import { costOf } from '@shura/model-gateway';
+import { internalToolName, type Vendor } from '@shura/core';
 
 export interface VendorToolCall {
   readonly id: string;

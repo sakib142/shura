@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS merge_queue (
   UNIQUE (change_request_id, verdict_id)
 );
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON change_requests, merge_queue TO forge_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO forge_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON change_requests, merge_queue TO shura_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO shura_app;
 
 COMMIT;

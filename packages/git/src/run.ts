@@ -102,5 +102,5 @@ export class Git {
 
 /** The identity an agent commits under, so a commit names its author. */
 export function agentIdentity(agentName: string, role: string, model: string): GitIdentity {
-  return { name: `${agentName} (${role})`, email: `${agentName}+${model}@agents.forge.local` };
+  return { name: `${agentName} (${role})`, email: `${agentName}+${model}@agents.shura.local` };
 }

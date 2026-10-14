@@ -1,4 +1,4 @@
-import type { TaskKind } from '@forge/core';
+import type { TaskKind } from '@shura/core';
 
 export interface TaskRecord {
   readonly id: string;

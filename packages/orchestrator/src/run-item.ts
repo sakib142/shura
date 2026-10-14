@@ -19,7 +19,7 @@ import {
   type RoleDefinition,
   type ToolName,
   type VerifierCandidate,
-} from '@forge/core';
+} from '@shura/core';
 import type {
   MergeQueue,
   Vcs,
@@ -31,12 +31,12 @@ import type {
   RunLimits,
   TaskContext,
   ToolCallRequest,
-} from '@forge/ports';
-import { agentIdentity } from '@forge/git';
-import { Worktree } from '@forge/sandbox';
-import { LocalMergeQueue, LocalVcs } from '@forge/connectors';
-import { PgAuditSink, PgClaims, PgEffectStore } from '@forge/db';
-import { McpToolGateway, resolveGrants, type ToolHandler } from '@forge/tool-gateway';
+} from '@shura/ports';
+import { agentIdentity } from '@shura/git';
+import { Worktree } from '@shura/sandbox';
+import { LocalMergeQueue, LocalVcs } from '@shura/connectors';
+import { PgAuditSink, PgClaims, PgEffectStore } from '@shura/db';
+import { McpToolGateway, resolveGrants, type ToolHandler } from '@shura/tool-gateway';
 import { producerHandlers, verifierHandlers } from './handlers.js';
 
 export type StreamEvent =
@@ -56,7 +56,7 @@ export interface RunOptions {
   readonly onEvent?: (e: StreamEvent) => void;
   /**
    * When present, the work item is read from here and progress is written back.
-   * Forge writes status and commentary only — the tracker owns the story
+   * Shura writes status and commentary only — the tracker owns the story
    * itself, so there is one writer per field and nothing to reconcile.
    */
   readonly tracker?: Tracker;

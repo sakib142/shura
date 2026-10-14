@@ -1,8 +1,8 @@
 /**
  * Where work items live.
  *
- * Read work, write progress. Forge never creates or edits a story: the tracker
- * owns those fields and Forge owns status and commentary, so there is exactly
+ * Read work, write progress. Shura never creates or edits a story: the tracker
+ * owns those fields and Shura owns status and commentary, so there is exactly
  * one writer per field and no two-way sync to reconcile.
  */
 

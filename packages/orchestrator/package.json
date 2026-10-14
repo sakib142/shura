@@ -1,5 +1,5 @@
 {
-  "name": "@forge/orchestrator",
+  "name": "@shura/orchestrator",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,15 +7,15 @@
   "types": "./src/index.ts",
   "exports": { ".": "./src/index.ts" },
   "dependencies": {
-    "@forge/connectors": "workspace:*",
-    "@forge/core": "workspace:*",
-    "@forge/db": "workspace:*",
-    "@forge/git": "workspace:*",
-    "@forge/ports": "workspace:*",
-    "@forge/roles": "workspace:*",
-    "@forge/runtimes": "workspace:*",
-    "@forge/sandbox": "workspace:*",
-    "@forge/tool-gateway": "workspace:*",
+    "@shura/connectors": "workspace:*",
+    "@shura/core": "workspace:*",
+    "@shura/db": "workspace:*",
+    "@shura/git": "workspace:*",
+    "@shura/ports": "workspace:*",
+    "@shura/roles": "workspace:*",
+    "@shura/runtimes": "workspace:*",
+    "@shura/sandbox": "workspace:*",
+    "@shura/tool-gateway": "workspace:*",
     "pg": "^8.13.1"
   },
   "devDependencies": { "@types/pg": "^8.11.10", "vitest": "^2.1.8" }

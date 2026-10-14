@@ -10,8 +10,8 @@
  * too: two fakes on the same vendor cannot verify each other.
  */
 
-import type { AgentEvent, AgentRuntime, RunRequest } from '@forge/ports';
-import type { Vendor } from '@forge/core';
+import type { AgentEvent, AgentRuntime, RunRequest } from '@shura/ports';
+import type { Vendor } from '@shura/core';
 
 export type FakeScript = (req: RunRequest) => readonly AgentEvent[];
 

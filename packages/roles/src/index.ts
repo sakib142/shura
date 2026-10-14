@@ -8,7 +8,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
-import { parseRole, type RoleDefinition } from '@forge/core';
+import { parseRole, type RoleDefinition } from '@shura/core';
 
 export const DEFINITIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'definitions');
 

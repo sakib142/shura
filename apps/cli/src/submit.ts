@@ -1,5 +1,5 @@
 /**
- * `forge submit` — define a work item.
+ * `shura submit` — define a work item.
  *
  * Acceptance criteria are the interface to this whole system: they are what
  * the reviewer judges against, so a vague criterion produces a vague verdict
@@ -9,7 +9,7 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { createPool, isReachable } from '@forge/db';
+import { createPool, isReachable } from '@shura/db';
 
 export interface Submission {
   readonly key: string;
@@ -77,7 +77,7 @@ function truncate(s: string): string {
 export async function submit(args: string[]): Promise<number> {
   const file = args.find((a) => !a.startsWith('--'));
   if (file === undefined) {
-    console.error('usage: forge submit <file.md>\n');
+    console.error('usage: shura submit <file.md>\n');
     console.error('  # ORD-42: Filter orders by status');
     console.error('  - Given a status filter, when orders are listed, then only those are returned');
     return 2;
@@ -111,6 +111,6 @@ export async function submit(args: string[]): Promise<number> {
 
   console.log(`${submission.key}  ${submission.title}`);
   for (const [i, c] of submission.criteria.entries()) console.log(`  [${i}] ${c}`);
-  console.log(`\nsubmitted. Run it with:  forge run ${submission.key}`);
+  console.log(`\nsubmitted. Run it with:  shura run ${submission.key}`);
   return 0;
 }

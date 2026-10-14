@@ -1,5 +1,5 @@
 /**
- * The starter config `forge init` writes.
+ * The starter config `shura init` writes.
  *
  * Heavily commented on purpose: for most people this file is the
  * documentation, and the commented-out blocks are how they discover that
@@ -7,11 +7,11 @@
  */
 
 export function starterConfig(project: string): string {
-  return `# Forge configuration.
+  return `# Shura configuration.
 #
 # Committed to the repository. Credentials are NAMED here, never carried —
 # every *Env field is the name of an environment variable, and the values live
-# in .env, which is gitignored. Forge refuses to load a config containing
+# in .env, which is gitignored. Shura refuses to load a config containing
 # anything shaped like a live token.
 
 project: ${project}
@@ -46,7 +46,7 @@ tracker:
 
 # Which model runs each role.
 #
-# The producer and its verifier MUST be different vendors. Forge checks this
+# The producer and its verifier MUST be different vendors. Shura checks this
 # when it schedules the verification and refuses before spending anything.
 agents:
   backend-developer:

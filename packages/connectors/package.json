@@ -1,5 +1,5 @@
 {
-  "name": "@forge/connectors",
+  "name": "@shura/connectors",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,12 +9,12 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@forge/core": "workspace:*",
-    "@forge/git": "workspace:*",
-    "@forge/ports": "workspace:*",
-    "@forge/sandbox": "workspace:*",
+    "@shura/core": "workspace:*",
+    "@shura/git": "workspace:*",
+    "@shura/ports": "workspace:*",
+    "@shura/sandbox": "workspace:*",
     "pg": "^8.13.1",
-    "@forge/db": "workspace:*"
+    "@shura/db": "workspace:*"
   },
   "devDependencies": {
     "@types/pg": "^8.11.10",

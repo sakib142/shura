@@ -1,6 +1,6 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
-import { CONFIG_FILENAME, starterConfig } from '@forge/config';
+import { CONFIG_FILENAME, starterConfig } from '@shura/config';
 
 export async function init(args: string[]): Promise<number> {
   const path = resolve(process.cwd(), CONFIG_FILENAME);
@@ -8,16 +8,16 @@ export async function init(args: string[]): Promise<number> {
     console.error(`${CONFIG_FILENAME} already exists. Pass --force to overwrite it.`);
     return 1;
   }
-  // The project name becomes a directory name under .forge, so it is slugified
+  // The project name becomes a directory name under .shura, so it is slugified
   // rather than taken verbatim from a folder that may contain spaces.
   const slug =
     basename(process.cwd())
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '') || 'forge';
+      .replace(/^-+|-+$/g, '') || 'shura';
   writeFileSync(path, starterConfig(slug));
   console.log(`wrote ${CONFIG_FILENAME}`);
   console.log('\nIt runs as-is against the bundled fixture. Edit `repo` to point at your own code,');
-  console.log('then: forge doctor');
+  console.log('then: shura doctor');
   return 0;
 }

@@ -10,8 +10,8 @@
  */
 
 import { GoogleGenAI } from '@google/genai';
-import { toolDefinitions, type Vendor } from '@forge/core';
-import type { AgentEvent, AgentRuntime, RunRequest } from '@forge/ports';
+import { toolDefinitions, type Vendor } from '@shura/core';
+import type { AgentEvent, AgentRuntime, RunRequest } from '@shura/ports';
 import { runAgentLoop, type VendorConversation, type VendorToolResult, type VendorTurn } from './loop.js';
 import { once } from './anthropic.js';
 import { systemPrompt, userPrompt } from './prompt.js';

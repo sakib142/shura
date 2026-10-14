@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
-import { Git, agentIdentity } from '@forge/git';
-import { Worktree } from '@forge/sandbox';
-import { createPool, isReachable } from '@forge/db';
+import { Git, agentIdentity } from '@shura/git';
+import { Worktree } from '@shura/sandbox';
+import { createPool, isReachable } from '@shura/db';
 import { LocalMergeQueue, LocalVcs, initRepo } from './vcs-local.js';
 
 const pool: Pool = createPool();
@@ -25,7 +25,7 @@ afterAll(() => {
 
 /** A seed project whose test suite passes, and can be made to fail. */
 function seedProject(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'forge-seed-'));
+  const dir = mkdtempSync(join(tmpdir(), 'shura-seed-'));
   dirs.push(dir);
   writeFileSync(join(dir, 'value.txt'), '1\n');
   writeFileSync(
@@ -39,7 +39,7 @@ function seedProject(): string {
 }
 
 async function freshRepo() {
-  const root = mkdtempSync(join(tmpdir(), 'forge-vcs-'));
+  const root = mkdtempSync(join(tmpdir(), 'shura-vcs-'));
   dirs.push(root);
   const repoDir = join(root, 'target.git');
   await initRepo(repoDir, seedProject());

@@ -1,5 +1,5 @@
 {
-  "name": "@forge/db",
+  "name": "@shura/db",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,9 +7,9 @@
   "types": "./src/index.ts",
   "exports": { ".": "./src/index.ts" },
   "dependencies": {
-    "@forge/core": "workspace:*",
-    "@forge/ports": "workspace:*",
-    "@forge/tool-gateway": "workspace:*",
+    "@shura/core": "workspace:*",
+    "@shura/ports": "workspace:*",
+    "@shura/tool-gateway": "workspace:*",
     "pg": "^8.13.1"
   },
   "devDependencies": { "@types/pg": "^8.11.10", "vitest": "^2.1.8" }

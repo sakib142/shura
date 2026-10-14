@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { InvariantViolation, assertDistinctVendor, parseRole, toolDefinitions } from '@forge/core';
-import type { AgentRuntime } from '@forge/ports';
+import { InvariantViolation, assertDistinctVendor, parseRole, toolDefinitions } from '@shura/core';
+import type { AgentRuntime } from '@shura/ports';
 import { AnthropicRuntime } from './anthropic.js';
 import { OpenAIRuntime, strictSchema } from './openai.js';
 import { GoogleRuntime } from './google.js';

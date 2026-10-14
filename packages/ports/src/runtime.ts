@@ -1,4 +1,4 @@
-import type { RoleDefinition, Vendor } from '@forge/core';
+import type { RoleDefinition, Vendor } from '@shura/core';
 import type { ToolCallResult } from './gateway.js';
 
 /** What an agent streams back while it works. */

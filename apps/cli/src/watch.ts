@@ -1,5 +1,5 @@
-import { createPool, databaseUrl, isReachable } from '@forge/db';
-import { startWatchServer } from '@forge/api';
+import { createPool, databaseUrl, isReachable } from '@shura/db';
+import { startWatchServer } from '@shura/api';
 
 export async function watch(args: string[]): Promise<number> {
   const portArg = args.find((a) => a.startsWith('--port='))?.split('=')[1];
@@ -14,7 +14,7 @@ export async function watch(args: string[]): Promise<number> {
 
   startWatchServer({ pool, port });
   console.log(`watching on http://localhost:${port}`);
-  console.log('Start a run in another terminal:  pnpm forge run <ITEM>');
+  console.log('Start a run in another terminal:  pnpm shura run <ITEM>');
   console.log('Ctrl-C to stop.');
 
   // Held open deliberately: this process exists to serve the page.

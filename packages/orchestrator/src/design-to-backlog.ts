@@ -17,10 +17,10 @@ import {
   type RoleDefinition,
   type ToolName,
   type VerifierCandidate,
-} from '@forge/core';
-import type { AgentEvent, AgentRuntime, DesignExtract, ToolCallRequest } from '@forge/ports';
-import { PgAuditSink, PgEffectStore } from '@forge/db';
-import { McpToolGateway, resolveGrants, type ToolHandler } from '@forge/tool-gateway';
+} from '@shura/core';
+import type { AgentEvent, AgentRuntime, DesignExtract, ToolCallRequest } from '@shura/ports';
+import { PgAuditSink, PgEffectStore } from '@shura/db';
+import { McpToolGateway, resolveGrants, type ToolHandler } from '@shura/tool-gateway';
 
 export interface ProposedStory {
   readonly title: string;

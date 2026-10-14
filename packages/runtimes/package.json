@@ -1,5 +1,5 @@
 {
-  "name": "@forge/runtimes",
+  "name": "@shura/runtimes",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,11 +11,11 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
-    "@forge/core": "workspace:*",
-    "@forge/ports": "workspace:*",
+    "@shura/core": "workspace:*",
+    "@shura/ports": "workspace:*",
     "@google/genai": "^2.29.1",
     "openai": "^7.33.0",
-    "@forge/model-gateway": "workspace:*"
+    "@shura/model-gateway": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^2.1.8"

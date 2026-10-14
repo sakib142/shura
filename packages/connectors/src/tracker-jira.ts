@@ -1,8 +1,8 @@
 /**
  * Jira Cloud.
  *
- * Reads work and writes progress, and nothing else. Forge does not create or
- * edit stories: Jira owns those fields, Forge owns status and commentary. One
+ * Reads work and writes progress, and nothing else. Shura does not create or
+ * edit stories: Jira owns those fields, Shura owns status and commentary. One
  * writer per field means there is no two-way sync to reconcile, which is the
  * trap the architecture doc's own risk table names.
  *
@@ -12,7 +12,7 @@
  * that cannot mean anything.
  */
 
-import type { Tracker, TrackerItem, TrackerState } from '@forge/ports';
+import type { Tracker, TrackerItem, TrackerState } from '@shura/ports';
 import { adfToText, textToAdf } from './adf.js';
 
 export interface JiraOptions {

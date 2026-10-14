@@ -8,9 +8,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { VENDORS, isKnownTool } from '@forge/core';
-import type { AgentEvent, AgentRuntime, RunRequest, RunLimits, ToolInvoker } from '@forge/ports';
-import type { RoleDefinition } from '@forge/core';
+import { VENDORS, isKnownTool } from '@shura/core';
+import type { AgentEvent, AgentRuntime, RunRequest, RunLimits, ToolInvoker } from '@shura/ports';
+import type { RoleDefinition } from '@shura/core';
 
 export const CONTRACT_ROLE: RoleDefinition = {
   id: 'contract-subject',

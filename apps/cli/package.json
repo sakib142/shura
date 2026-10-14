@@ -1,25 +1,25 @@
 {
-  "name": "@forge/cli",
+  "name": "@shura/cli",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "bin": {
-    "forge": "./src/main.ts"
+    "shura": "./src/main.ts"
   },
   "dependencies": {
-    "@forge/core": "workspace:*",
-    "@forge/db": "workspace:*",
-    "@forge/roles": "workspace:*",
-    "@forge/git": "workspace:*",
-    "@forge/model-gateway": "workspace:*",
-    "@forge/runtimes": "workspace:*",
-    "@forge/ports": "workspace:*",
-    "@forge/orchestrator": "workspace:*",
-    "@forge/connectors": "workspace:*",
-    "@forge/sandbox": "workspace:*",
-    "@forge/fault-corpus": "workspace:*",
-    "@forge/config": "workspace:*",
-    "@forge/api": "workspace:*"
+    "@shura/core": "workspace:*",
+    "@shura/db": "workspace:*",
+    "@shura/roles": "workspace:*",
+    "@shura/git": "workspace:*",
+    "@shura/model-gateway": "workspace:*",
+    "@shura/runtimes": "workspace:*",
+    "@shura/ports": "workspace:*",
+    "@shura/orchestrator": "workspace:*",
+    "@shura/connectors": "workspace:*",
+    "@shura/sandbox": "workspace:*",
+    "@shura/fault-corpus": "workspace:*",
+    "@shura/config": "workspace:*",
+    "@shura/api": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2"

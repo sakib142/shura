@@ -8,7 +8,7 @@
  */
 
 import type { Pool } from 'pg';
-import type { EffectClaim, EffectStore } from '@forge/ports';
+import type { EffectClaim, EffectStore } from '@shura/ports';
 
 export const DEFAULT_LEASE = '15 minutes';
 

@@ -7,7 +7,7 @@
  */
 
 import type { Pool } from 'pg';
-import type { AuditSink, ToolCallAudit } from '@forge/tool-gateway';
+import type { AuditSink, ToolCallAudit } from '@shura/tool-gateway';
 
 export class PgAuditSink implements AuditSink {
   readonly #pool: Pool;

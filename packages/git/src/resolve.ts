@@ -25,15 +25,15 @@ export const GIT_CANDIDATES = [
 export interface GitResolution {
   readonly path: string;
   readonly version: string;
-  /** How it was found, for `forge doctor` to explain itself. */
-  readonly source: 'FORGE_GIT' | 'PATH' | 'well-known';
+  /** How it was found, for `shura doctor` to explain itself. */
+  readonly source: 'SHURA_GIT' | 'PATH' | 'well-known';
 }
 
 export class GitNotFound extends Error {
   constructor(readonly tried: readonly string[]) {
     super(
       `no working git found. Tried: ${tried.join(', ')}. ` +
-        'Set FORGE_GIT to a git binary that runs, or install one (brew install git).',
+        'Set SHURA_GIT to a git binary that runs, or install one (brew install git).',
     );
     this.name = 'GitNotFound';
   }
@@ -59,14 +59,14 @@ export function resolveGit(opts: { refresh?: boolean } = {}): GitResolution {
 
   const tried: string[] = [];
 
-  const override = process.env.FORGE_GIT;
+  const override = process.env.SHURA_GIT;
   if (override !== undefined && override !== '') {
     tried.push(override);
     const version = probe(override);
     // An explicit override that does not work is an error, not something to
     // quietly route around — the operator meant that binary.
     if (version === undefined) throw new GitNotFound(tried);
-    cached = { path: override, version, source: 'FORGE_GIT' };
+    cached = { path: override, version, source: 'SHURA_GIT' };
     return cached;
   }
 

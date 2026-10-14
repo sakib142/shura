@@ -1,7 +1,7 @@
 /**
- * `forge run` — one work item through the whole loop, streaming.
+ * `shura run` — one work item through the whole loop, streaming.
  *
- * Everything that used to be hardcoded here now comes from forge.config.yaml:
+ * Everything that used to be hardcoded here now comes from shura.config.yaml:
  * which repo, which checks, which agent, which models, which budgets.
  *
  * Deliberately verbose. The denial lines and the vendor-pair line are the
@@ -11,19 +11,19 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { createPool, databaseUrl, isReachable } from '@forge/db';
-import { GitHubMergeQueue, GitHubVcs, JiraTracker, initRepo } from '@forge/connectors';
-import { loadConfig, resolveFrom, type AgentConfig, type ForgeConfig } from '@forge/config';
-import { loadAllRoles, withPrompt } from '@forge/roles';
+import { createPool, databaseUrl, isReachable } from '@shura/db';
+import { GitHubMergeQueue, GitHubVcs, JiraTracker, initRepo } from '@shura/connectors';
+import { loadConfig, resolveFrom, type AgentConfig, type ForgeConfig } from '@shura/config';
+import { loadAllRoles, withPrompt } from '@shura/roles';
 import {
   AnthropicRuntime,
   GoogleRuntime,
   OpenAICompatibleRuntime,
   OpenAIRuntime,
-} from '@forge/runtimes';
-import type { AgentRuntime, Tracker } from '@forge/ports';
-import type { RoleDefinition } from '@forge/core';
-import { runWorkItem, type StreamEvent } from '@forge/orchestrator';
+} from '@shura/runtimes';
+import type { AgentRuntime, Tracker } from '@shura/ports';
+import type { RoleDefinition } from '@shura/core';
+import { runWorkItem, type StreamEvent } from '@shura/orchestrator';
 
 function render(e: StreamEvent): void {
   const t = new Date().toTimeString().slice(0, 8);
@@ -100,7 +100,7 @@ export async function run(args: string[]): Promise<number> {
   const key = args.find((a) => !a.startsWith('--') && !isFlagValue(args, a));
   if (key === undefined) {
     console.error(
-      'usage: forge run <ITEM> [--role R] [--reviewer R] [--reset] [--reseed]\n' +
+      'usage: shura run <ITEM> [--role R] [--reviewer R] [--reset] [--reseed]\n' +
         '  --reset   clear run records; the repository is untouched\n' +
         '  --reseed  rebuild the local repository from the fixture, discarding merged work',
     );
@@ -135,7 +135,7 @@ export async function run(args: string[]): Promise<number> {
   if (producer.agent.runtime === verifier.agent.runtime) {
     console.error(
       `${producerId} and ${verifierId} are both on "${producer.agent.runtime}".\n` +
-        'A verifier must run a different vendor. Change one in forge.config.yaml under `agents`.',
+        'A verifier must run a different vendor. Change one in shura.config.yaml under `agents`.',
     );
     return 2;
   }
@@ -176,7 +176,7 @@ export async function run(args: string[]): Promise<number> {
 
     const item = await tracker.get(key);
     if (item === undefined) {
-      // Not in Jira. It may still be a local item from `forge submit`, which
+      // Not in Jira. It may still be a local item from `shura submit`, which
       // is how you try something without creating a ticket for it. Falling
       // through is friendlier than refusing, as long as it says which it used.
       const { rows: local } = await pool.query<{ title: string }>(
@@ -186,7 +186,7 @@ export async function run(args: string[]): Promise<number> {
       if (local[0] === undefined) {
         console.error(
           `no issue "${key}" in ${config.tracker.site}, and no local work item either.\n` +
-            'Create one in Jira, or locally with:  forge submit <file.md>',
+            'Create one in Jira, or locally with:  shura submit <file.md>',
         );
         await pool.end();
         return 1;
@@ -219,7 +219,7 @@ export async function run(args: string[]): Promise<number> {
     [key],
   );
   if (rows[0] === undefined) {
-    console.error(`no work item "${key}". Create one with:  forge submit <file.md>`);
+    console.error(`no work item "${key}". Create one with:  shura submit <file.md>`);
     await pool.end();
     return 1;
   }
@@ -240,14 +240,14 @@ export async function run(args: string[]): Promise<number> {
       token,
       base: config.repo.base,
       checkCommand: config.repo.checks,
-      workDir: join(loaded.dir, '.forge'),
+      workDir: join(loaded.dir, '.shura'),
     };
     const vcs = new GitHubVcs(options);
     github = { vcs, queue: new GitHubMergeQueue(options, vcs) };
     console.log(`cloning ${config.repo.owner}/${config.repo.name}`);
     repoDir = await vcs.repoDir();
   } else {
-    repoDir = join(loaded.dir, '.forge', `${config.project}.git`);
+    repoDir = join(loaded.dir, '.shura', `${config.project}.git`);
 
     // Seed only when there is nothing there, or when asked to start over.
     // Re-seeding on every run deletes whatever the previous run merged, which

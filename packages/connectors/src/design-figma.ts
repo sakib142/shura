@@ -10,7 +10,7 @@
  */
 
 import { readFileSync } from 'node:fs';
-import type { DesignExtract, DesignSource } from '@forge/ports';
+import type { DesignExtract, DesignSource } from '@shura/ports';
 
 export class DesignUnavailable extends Error {
   constructor(

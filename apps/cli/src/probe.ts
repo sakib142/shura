@@ -1,5 +1,5 @@
 /**
- * `forge probe` — does the reviewer catch a fault the tests do not?
+ * `shura probe` — does the reviewer catch a fault the tests do not?
  *
  * This is the question the whole design rests on. Everything else is machinery
  * for getting a verifier in front of a diff; this measures whether that was
@@ -14,19 +14,19 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPool, isReachable } from '@forge/db';
-import { LocalVcs, initRepo } from '@forge/connectors';
-import { Worktree } from '@forge/sandbox';
-import { agentIdentity } from '@forge/git';
-import { loadAllRoles, withPrompt } from '@forge/roles';
-import { OpenAIRuntime } from '@forge/runtimes';
-import { verifyChange } from '@forge/orchestrator';
-import { CASES, type Case } from '@forge/fault-corpus';
+import { createPool, isReachable } from '@shura/db';
+import { LocalVcs, initRepo } from '@shura/connectors';
+import { Worktree } from '@shura/sandbox';
+import { agentIdentity } from '@shura/git';
+import { loadAllRoles, withPrompt } from '@shura/roles';
+import { OpenAIRuntime } from '@shura/runtimes';
+import { verifyChange } from '@shura/orchestrator';
+import { CASES, type Case } from '@shura/fault-corpus';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = join(HERE, '..', '..', '..');
 const FIXTURE = join(ROOT, 'eval', 'fixtures', 'target-app');
-const REPO = join(ROOT, '.forge', 'probe.git');
+const REPO = join(ROOT, '.shura', 'probe.git');
 const CHECK = ['node', '--test', '--experimental-strip-types', 'test/orders.test.ts'];
 
 const CRITERIA = [

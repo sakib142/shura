@@ -11,12 +11,12 @@ import {
   type AcceptedVerdict,
   type RoleDefinition,
   type ToolName,
-} from '@forge/core';
-import type { AgentEvent, AgentRuntime, ChangeRequestRef, ToolCallRequest } from '@forge/ports';
-import { Worktree } from '@forge/sandbox';
-import type { LocalVcs } from '@forge/connectors';
-import { PgAuditSink, PgEffectStore } from '@forge/db';
-import { McpToolGateway, resolveGrants, type ToolHandler } from '@forge/tool-gateway';
+} from '@shura/core';
+import type { AgentEvent, AgentRuntime, ChangeRequestRef, ToolCallRequest } from '@shura/ports';
+import { Worktree } from '@shura/sandbox';
+import type { LocalVcs } from '@shura/connectors';
+import { PgAuditSink, PgEffectStore } from '@shura/db';
+import { McpToolGateway, resolveGrants, type ToolHandler } from '@shura/tool-gateway';
 import { verifierHandlers } from './handlers.js';
 
 export interface VerifyOptions {
