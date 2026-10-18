@@ -15,7 +15,7 @@
 import { spawn } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { RoleDefinition, Vendor } from '@shura/core';
 import type { AgentEvent, AgentRuntime, RunRequest } from '@shura/ports';
@@ -352,20 +352,30 @@ function parseMaybeJson(text: string): unknown {
 
 function relativeTo(workdir: string | undefined, path: string): string {
   if (workdir === undefined) return path;
-  // Both spellings: on macOS /var is a symlink to /private/var and the CLI
-  // reports whichever it resolved, so a literal comparison leaves half the
-  // paths absolute in the log.
-  const candidates = [workdir];
-  try {
-    candidates.push(realpathSync(workdir));
-  } catch {
-    // Gone already; the literal path is still the right thing to try.
+  // Both sides canonicalised, not just the worktree.
+  //
+  // Resolving only one end was not enough: on macOS the worktree may be known
+  // as /private/var while the CLI reports /var, and adding spellings of the
+  // worktree still misses the case where the incoming path is the unresolved
+  // one. The guard learned this the same way, and this is the same fix.
+  const target = canonical(path);
+  const base = canonical(workdir);
+  const prefix = base.endsWith('/') ? base : `${base}/`;
+  return target.startsWith(prefix) ? target.slice(prefix.length) : path;
+}
+
+/** A path with its existing ancestors resolved. The leaf may not exist yet. */
+function canonical(p: string): string {
+  let cur = p;
+  for (;;) {
+    try {
+      return realpathSync(cur) + p.slice(cur.length);
+    } catch {
+      const parent = dirname(cur);
+      if (parent === cur) return p;
+      cur = parent;
+    }
   }
-  for (const dir of candidates) {
-    const base = dir.endsWith('/') ? dir : `${dir}/`;
-    if (path.startsWith(base)) return path.slice(base.length);
-  }
-  return path;
 }
 
 function lastLine(text: string): string {

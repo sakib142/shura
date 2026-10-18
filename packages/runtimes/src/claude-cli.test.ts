@@ -1,3 +1,5 @@
+import { realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { parseRole } from '@shura/core';
 import type { RunRequest } from '@shura/ports';
@@ -233,6 +235,26 @@ describe('mapping claude events', () => {
         },
       },
       '/tmp/wt-9',
+    );
+    expect(out[1]).toEqual({ t: 'file_change', path: 'src/a.ts' });
+  });
+
+  /**
+   * Resolving only the worktree was not enough. On macOS the worktree may be
+   * known as /private/var while the CLI reports /var, so the reviewer-fix
+   * step logged absolute paths while the builder logged relative ones — in
+   * the same run.
+   */
+  it('relativises whichever spelling of the worktree the CLI reports', () => {
+    const real = realpathSync(tmpdir());
+    const out = mapEvent(
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'tool_use', name: 'Edit', input: { file_path: `${real}/wt/src/a.ts` } }],
+        },
+      },
+      `${tmpdir()}/wt`,
     );
     expect(out[1]).toEqual({ t: 'file_change', path: 'src/a.ts' });
   });
