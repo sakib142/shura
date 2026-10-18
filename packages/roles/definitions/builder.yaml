@@ -1,0 +1,15 @@
+# The building position.
+#
+# The only role that may change the repository. Everything it writes is judged
+# by a reviewer on a different vendor's model before a human is asked to merge
+# it, which is the arrangement the whole project exists to enforce.
+id: builder
+kind: produce
+model:
+  runtime: anthropic
+  model: default
+tools: [repo.read, repo.search, repo.write, test.run, tracker.comment, claims.claim]
+limits: { max_minutes: 90, max_tokens: 2000000, max_usd: 8.00 }
+instructions: prompts/builder.md
+output: { change_request: required }
+never: [repo.merge, tracker.write]

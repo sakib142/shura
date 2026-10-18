@@ -2,7 +2,7 @@ id: design-analyst
 kind: produce
 model:
   runtime: anthropic
-  model: claude-sonnet-5
+  model: default
 tools: [docs.read, tracker.read, tracker.write]
 limits: { max_minutes: 45, max_tokens: 1000000, max_usd: 5.00 }
 instructions: prompts/design-analyst.md

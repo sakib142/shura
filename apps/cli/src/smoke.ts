@@ -1,159 +1,170 @@
 /**
- * A real round-trip against each configured vendor.
+ * `shura smoke` — does this machine have what a run needs?
  *
- * The unit tests prove the loop is correct against scripted vendors. They
- * cannot prove the request shapes are right, because those were written from
- * documentation and documentation drifts. This spends a few cents to find out.
+ * Shura drives the vendor CLIs under the user's own subscription, so the
+ * question is no longer "is this API key valid" but "is the CLI installed, is
+ * it logged in, and is it logged in as a subscription rather than an API key".
  *
- * The probe is deliberately one that cannot be faked by a model guessing: the
- * answer is a random token that exists only in the tool result, so a response
- * containing it proves the tool was defined, called, parsed, executed, fed back
- * and read.
+ * The last one matters most and is the easiest to get silently wrong: a key in
+ * the environment puts every run back on metered billing, which is the thing
+ * this project reorganised itself to avoid. One real round-trip per CLI is the
+ * only honest way to check, and on a subscription it costs nothing.
  */
 
-import { parseRole, type RoleDefinition, type Vendor } from '@shura/core';
-import type { AgentEvent, RunRequest, ToolCallResult } from '@shura/ports';
-import {
-  AnthropicRuntime,
-  GoogleRuntime,
-  OpenAICompatibleRuntime,
-  OpenAIRuntime,
-} from '@shura/runtimes';
-import type { AgentRuntime } from '@shura/ports';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
-interface Probe {
-  readonly vendor: Vendor;
-  readonly model: string;
-  readonly envVar: string;
-  readonly make: () => AgentRuntime;
+const exec = promisify(execFile);
+
+interface Engine {
+  readonly bin: string;
+  readonly vendor: string;
+  readonly role: string;
+  /** Proves it answers, and reports how it is authenticated. */
+  probe: () => Promise<{ ok: boolean; detail: string; metered?: boolean }>;
 }
 
-const PROBES: readonly Probe[] = [
-  { vendor: 'anthropic', model: 'claude-sonnet-5', envVar: 'ANTHROPIC_API_KEY', make: () => new AnthropicRuntime() },
-  { vendor: 'openai', model: 'gpt-6.1-sol', envVar: 'OPENAI_API_KEY', make: () => new OpenAIRuntime() },
-  { vendor: 'google', model: 'gemini-3.8-flash', envVar: 'GOOGLE_API_KEY', make: () => new GoogleRuntime() },
-  { vendor: 'local', model: process.env.LOCAL_MODEL ?? 'llama3.1', envVar: 'LOCAL_BASE_URL', make: () => new OpenAICompatibleRuntime() },
-];
-
-function role(vendor: Vendor, model: string): RoleDefinition {
-  return parseRole({
-    id: `smoke-${vendor}`,
-    kind: 'produce',
-    model: { runtime: vendor, model },
-    tools: ['repo.read'],
-    limits: { max_minutes: 2, max_tokens: 20_000, max_usd: 0.5 },
-    instructions:
-      'You are verifying a tool pipeline. Read the file named in the task using the ' +
-      'repo read tool, then reply with the build token it contains and nothing else. ' +
-      'Do not ask questions; the path is in the task.',
-  });
-}
-
-function request(r: RoleDefinition, secret: string, signal: AbortSignal): RunRequest {
-  let reads = 0;
-  const invoke = async (tool: string, args: unknown): Promise<ToolCallResult> => {
-    if (tool !== 'repo.read') {
-      return { allowed: false, errorCategory: 'permission', isRetryable: false, denialReason: `"${tool}" is not granted` };
-    }
-    reads++;
-    void args;
-    return { allowed: true, output: { content: `BUILD_TOKEN=${secret}` } };
-  };
-  Object.defineProperty(invoke, 'reads', { get: () => reads });
-
-  return {
-    role: r,
-    context: {
-      workItemKey: 'SMOKE-1',
-      artifactType: 'code_change',
-      acceptanceCriteria: [
-        'Given the file build/stamp.txt, when it is read, then its build token is reported',
-      ],
-      attempt: 1,
-      diff: 'Read the file at path: build/stamp.txt',
+const ENGINES: readonly Engine[] = [
+  {
+    bin: 'claude',
+    vendor: 'anthropic',
+    role: 'builds and plans',
+    probe: async () => {
+      const { stdout } = await exec(
+        'claude',
+        [
+          '-p',
+          'Reply with exactly: ok',
+          '--output-format',
+          'json',
+          '--model',
+          'claude-haiku-4-5',
+          '--allowedTools',
+          '--strict-mcp-config',
+          '--setting-sources',
+          '',
+        ],
+        { env: { ...process.env, ANTHROPIC_API_KEY: '' }, timeout: 120_000, maxBuffer: 1 << 20 },
+      );
+      const parsed = JSON.parse(stdout) as {
+        is_error?: boolean;
+        result?: string;
+        total_cost_usd?: number;
+      };
+      if (parsed.is_error === true) return { ok: false, detail: parsed.result ?? 'returned an error' };
+      return {
+        ok: true,
+        detail: `answered "${(parsed.result ?? '').trim().slice(0, 20)}"`,
+      };
     },
-    tools: ['repo.read'],
-    limits: { maxMinutes: 2, maxTokens: 20_000, maxUsd: 0.5 },
-    signal,
-    invoke,
-  };
-}
-
-export async function smoke(only?: string): Promise<number> {
-  const secret = `T${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
-  let ran = 0;
-  let failed = 0;
-
-  for (const probe of PROBES) {
-    if (only !== undefined && probe.vendor !== only) continue;
-    if ((process.env[probe.envVar] ?? '') === '') {
-      console.log(`  skip   ${probe.vendor.padEnd(10)} ${probe.envVar} not set`);
-      continue;
-    }
-
-    ran++;
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort('smoke timeout'), 120_000);
-    const started = Date.now();
-    const events: AgentEvent[] = [];
-    let toolCalls = 0;
-    let tokensIn = 0;
-    let tokensOut = 0;
-    let usd = 0;
-
-    try {
-      const runtime = probe.make();
-      const req = request(role(probe.vendor, probe.model), secret, ac.signal);
-
-      for await (const e of runtime.run(req)) {
-        events.push(e);
-        if (e.t === 'tool_call') toolCalls++;
-        if (e.t === 'usage') {
-          tokensIn += e.tokensIn;
-          tokensOut += e.tokensOut;
-          usd = e.usd;
+  },
+  {
+    bin: 'codex',
+    vendor: 'openai',
+    role: 'reviews',
+    probe: async () => {
+      const { stdout } = await exec(
+        'codex',
+        [
+          'exec',
+          '--json',
+          '-s',
+          'read-only',
+          '--ignore-user-config',
+          '--ephemeral',
+          '--skip-git-repo-check',
+          'Reply with exactly: ok',
+        ],
+        { env: { ...process.env, OPENAI_API_KEY: '' }, timeout: 120_000, maxBuffer: 1 << 20 },
+      );
+      for (const line of stdout.split('\n')) {
+        if (line.trim() === '') continue;
+        try {
+          const e = JSON.parse(line) as { type?: string; item?: { text?: string } };
+          if (e.type === 'item.completed' && e.item?.text !== undefined) {
+            return { ok: true, detail: `answered "${e.item.text.trim().slice(0, 20)}"` };
+          }
+        } catch {
+          continue;
         }
       }
-    } catch (err) {
-      console.log(`  FAIL   ${probe.vendor.padEnd(10)} threw: ${err instanceof Error ? err.message : String(err)}`);
-      failed++;
-      clearTimeout(timer);
-      continue;
-    }
-    clearTimeout(timer);
+      return { ok: false, detail: 'produced no answer' };
+    },
+  },
+];
 
-    const last = events.at(-1);
-    const seconds = ((Date.now() - started) / 1000).toFixed(1);
+const ok = (s: string): string => `  ok    ${s}`;
+const no = (s: string): string => `  ----  ${s}`;
 
-    if (last?.t !== 'result') {
-      console.log(`  FAIL   ${probe.vendor.padEnd(10)} ${last?.t === 'error' ? last.message : 'no result'}`);
-      failed++;
-      continue;
-    }
+export async function smoke(only?: string): Promise<number> {
+  const engines = only === undefined ? ENGINES : ENGINES.filter((e) => e.bin === only || e.vendor === only);
+  if (engines.length === 0) {
+    console.error(`unknown engine "${only}". Try: ${ENGINES.map((e) => e.bin).join(', ')}`);
+    return 2;
+  }
 
-    // The token exists only in the tool result, so this is the whole pipeline.
-    const output = String(last.output);
-    const roundTripped = output.includes(secret);
-    const cost = usd > 0 ? `$${usd.toFixed(4)}` : 'unpriced';
+  const lines: string[] = [];
+  let fatal = false;
+  const working: string[] = [];
 
-    if (!roundTripped || toolCalls === 0) {
-      console.log(
-        `  FAIL   ${probe.vendor.padEnd(10)} ${toolCalls} tool call(s), token ${roundTripped ? 'returned' : 'MISSING'} — ${output.slice(0, 80)}`,
+  for (const engine of engines) {
+    // A key in the environment silently restores metered billing. Worth saying
+    // before the round-trip, because the round-trip would not reveal it.
+    const keyVar = engine.vendor === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
+    if ((process.env[keyVar] ?? '') !== '') {
+      lines.push(
+        no(
+          `${keyVar} is set. Shura blanks it per run so work stays on your subscription, ` +
+            'but anything else you run will be billed per token.',
+        ),
       );
-      failed++;
+    }
+
+    try {
+      await exec(engine.bin, ['--version'], { timeout: 15_000 });
+    } catch {
+      lines.push(no(`${engine.bin} is not installed — needed to run the agent that ${engine.role}`));
+      fatal = true;
       continue;
     }
 
-    console.log(
-      `  ok     ${probe.vendor.padEnd(10)} ${probe.model.padEnd(16)} ${toolCalls} tool call  ` +
-        `${tokensIn}/${tokensOut} tok  ${cost}  ${seconds}s`,
-    );
+    try {
+      const result = await engine.probe();
+      if (result.ok) {
+        lines.push(ok(`${engine.bin.padEnd(7)} ${result.detail}  (${engine.vendor}, ${engine.role})`));
+        working.push(engine.vendor);
+      } else {
+        lines.push(no(`${engine.bin}: ${result.detail}`));
+        fatal = true;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      lines.push(
+        no(
+          `${engine.bin} did not answer: ${message.split('\n')[0]?.slice(0, 160)}\n` +
+            `        If it is not logged in, run: ${engine.bin === 'claude' ? 'claude' : 'codex'} login`,
+        ),
+      );
+      fatal = true;
+    }
   }
 
-  if (ran === 0) {
-    console.log('\nNo vendors configured. Add keys to .env.');
-    return 1;
+  // Rule 1 needs two vendors. One working CLI is not half a platform, it is
+  // none of one: no pair means no verification, and no verification is the one
+  // thing Shura refuses to do.
+  if (only === undefined) {
+    const vendors = new Set(working);
+    lines.push(
+      vendors.size >= 2
+        ? ok(`a reviewer can run on a different vendor from the builder (${[...vendors].join(' + ')})`)
+        : no(
+            'no cross-vendor pair. A verifier must run a different vendor from the producer, so ' +
+              'both CLIs have to work — one on its own cannot review itself.',
+          ),
+    );
+    if (vendors.size < 2) fatal = true;
   }
-  console.log(`\n${ran - failed}/${ran} vendors round-tripped a real tool call.`);
-  return failed === 0 ? 0 : 1;
+
+  console.log(lines.join('\n'));
+  return fatal ? 1 : 0;
 }

@@ -58,4 +58,19 @@ export type ToolEffect = 'read' | 'execute' | 'write';
  *  channel rather than a way to touch the artifact under review. */
 export const VERIFIER_OUTPUT_TOOL = 'verdict.submit';
 
+/**
+ * What a verifier asks for when it has found something.
+ *
+ * 'return' sends the work back to the producer, which is the default and the
+ * only option for a reviewer that cannot write.
+ *
+ * 'fix' means the reviewer would rather correct it itself. Honouring that does
+ * NOT give the verify task a write grant — rule 2 is unchanged. It schedules a
+ * separate `produce` task under the reviewer's identity, so the audit shows a
+ * verify task that judged and a produce task that wrote, and no single task
+ * ever did both.
+ */
+export const REVIEWER_ACTIONS = ['fix', 'return'] as const;
+export type ReviewerAction = (typeof REVIEWER_ACTIONS)[number];
+
 /* The catalog, its argument schemas and ToolName live in schemas/tools.ts. */

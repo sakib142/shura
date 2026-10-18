@@ -13,14 +13,15 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createPool, databaseUrl, isReachable } from '@shura/db';
 import { GitHubMergeQueue, GitHubVcs, JiraTracker, initRepo } from '@shura/connectors';
-import { loadConfig, resolveFrom, type AgentConfig, type ForgeConfig } from '@shura/config';
-import { loadAllRoles, withPrompt } from '@shura/roles';
 import {
-  AnthropicRuntime,
-  GoogleRuntime,
-  OpenAICompatibleRuntime,
-  OpenAIRuntime,
-} from '@shura/runtimes';
+  ConfigInvalid,
+  loadConfig,
+  resolveFrom,
+  type AgentConfig,
+  type ForgeConfig,
+} from '@shura/config';
+import { loadAllRoles, withPrompt } from '@shura/roles';
+import { ClaudeCliRuntime, CodexCliRuntime } from '@shura/runtimes';
 import type { AgentRuntime, Tracker } from '@shura/ports';
 import type { RoleDefinition } from '@shura/core';
 import { runWorkItem, type StreamEvent } from '@shura/orchestrator';
@@ -46,13 +47,33 @@ function preview(args: unknown): string {
   return s.length > 90 ? `${s.slice(0, 90)}…` : s;
 }
 
-/** The runtime for a vendor. One place, so a new vendor is one line. */
+/**
+ * The runtime for a vendor.
+ *
+ * A vendor now implies its CLI, because there is one transport per vendor:
+ * anthropic means `claude`, openai means `codex`. That is why nothing in the
+ * configuration schema had to change and why rule 1 still compares exactly
+ * what it compared before — `anthropic` and `openai` are still two vendors,
+ * whatever process is carrying the conversation.
+ *
+ * Both authenticate with the user's own subscription. Metered API billing on
+ * top of a subscription someone already pays for is a second bill, and a
+ * second bill is why a tool does not get adopted.
+ */
 export function runtimeFor(agent: AgentConfig): AgentRuntime {
   switch (agent.runtime) {
-    case 'anthropic': return new AnthropicRuntime();
-    case 'openai': return new OpenAIRuntime();
-    case 'google': return new GoogleRuntime();
-    case 'local': return new OpenAICompatibleRuntime();
+    case 'anthropic':
+      return new ClaudeCliRuntime();
+    case 'openai':
+      return new CodexCliRuntime();
+    case 'google':
+    case 'local':
+      throw new ConfigInvalid(`agents: no CLI runtime for "${agent.runtime}"`, [
+        'Shura drives the vendor CLIs so that runs are covered by a subscription rather than ' +
+          'billed per token. Only anthropic (claude) and openai (codex) have one today.',
+        'Set both agents to anthropic or openai — and not the same one, because a reviewer must ' +
+          'run a different vendor from the builder.',
+      ]);
   }
 }
 
@@ -77,10 +98,16 @@ export function configuredRole(
         model: model.model,
         ...(model.fallback === undefined ? {} : { fallback: model.fallback }),
       },
+      // The lower of the two, not the configured one.
+      //
+      // The budget is an operator ceiling and the role's limit is what the role
+      // needs; taking the minimum respects both. Replacing outright meant a
+      // planner that declares it needs $3 silently got the $5 ceiling meant for
+      // a whole build, which is not what either number was saying.
       limits: {
-        max_minutes: config.budgets.per_task_minutes,
-        max_tokens: config.budgets.per_task_tokens,
-        max_usd: config.budgets.per_task_usd,
+        max_minutes: Math.min(base.limits.max_minutes, config.budgets.per_task_minutes),
+        max_tokens: Math.min(base.limits.max_tokens, config.budgets.per_task_tokens),
+        max_usd: Math.min(base.limits.max_usd, config.budgets.per_task_usd),
       },
     },
   };
@@ -107,8 +134,8 @@ export async function run(args: string[]): Promise<number> {
     return 2;
   }
 
-  const producerId = flag(args, 'role') ?? 'backend-developer';
-  const verifierId = flag(args, 'reviewer') ?? 'code-reviewer';
+  const producerId = flag(args, 'role') ?? 'builder';
+  const verifierId = flag(args, 'reviewer') ?? 'reviewer';
 
   const roles = loadAllRoles();
   const producerBase = roles.get(producerId);

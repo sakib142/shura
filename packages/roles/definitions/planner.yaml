@@ -1,0 +1,24 @@
+# The planning position.
+#
+# Separate from the builder because the grants differ, and the grants are the
+# point: a planner holds no repo.write, so it cannot start building while it is
+# supposed to be deciding what to build. It reads the repository, runs the
+# checks to see where it is starting from, and submits one plan.
+#
+# The plan is where free-form instructions become acceptance criteria. Nothing
+# downstream can judge "add a date filter"; everything downstream can judge
+# "Given an order list, when a date range is applied, then only orders in that
+# range are shown".
+#
+# Nothing here is specific to a kind of code. What the agent should know about
+# the domain it is working in arrives as an overlay — see domains/.
+id: planner
+kind: produce
+model:
+  runtime: anthropic
+  model: default
+tools: [repo.read, repo.search, test.run, plan.submit]
+limits: { max_minutes: 30, max_tokens: 600000, max_usd: 3.00 }
+instructions: prompts/planner.md
+output: { plan: required }
+never: [repo.write, repo.merge, tracker.write, claims.claim]

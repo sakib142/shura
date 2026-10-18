@@ -8,7 +8,13 @@
  */
 
 import type { Pool } from 'pg';
-import { acceptVerdict, type AcceptedVerdict, type ToolName } from '@shura/core';
+import {
+  acceptPlan,
+  acceptVerdict,
+  type AcceptedVerdict,
+  type PlanSubmission,
+  type ToolName,
+} from '@shura/core';
 import type { ToolHandler } from '@shura/tool-gateway';
 import type { Worktree } from '@shura/sandbox';
 
@@ -19,6 +25,16 @@ export interface VerifierFacts {
   /** Read at submission time, so the recorded cost is what the run actually spent. */
   readonly spent: () => { tokensIn: number; tokensOut: number; usd: number };
 }
+
+/**
+ * Who ran, and what it spent.
+ *
+ * The same shape serves a verifier submitting a verdict and a planner
+ * submitting a plan, for the same reason in both cases: the platform knows
+ * which agent ran and what it cost, and asking a model to report its own
+ * identity invites it to be wrong about it.
+ */
+export type AuthorFacts = VerifierFacts;
 
 /** How a producer takes file ownership. Absent means claiming is unavailable,
  *  which is reported rather than silently succeeding. */
@@ -37,14 +53,19 @@ export interface HandlerContext {
   readonly criterionCount: number;
   /** Filled in when a verifier submits. */
   onVerdict?: (v: AcceptedVerdict) => void;
+  /** Filled in when a planner submits. */
+  onPlan?: (p: PlanSubmission) => void;
   onComment?: (body: string) => void;
   verifier?: VerifierFacts;
+  /** Who is planning. Same shape as `verifier`, different task. */
+  author?: AuthorFacts;
   claims?: ClaimBroker;
 }
 
 export function producerHandlers(ctx: HandlerContext): Map<ToolName, ToolHandler> {
   return new Map<ToolName, ToolHandler>([
     ['repo.read', readHandler(ctx)],
+    ['repo.search', searchHandler(ctx)],
     [
       'repo.write',
       async ({ args }) => {
@@ -86,6 +107,7 @@ export function producerHandlers(ctx: HandlerContext): Map<ToolName, ToolHandler
 export function verifierHandlers(ctx: HandlerContext): Map<ToolName, ToolHandler> {
   return new Map<ToolName, ToolHandler>([
     ['repo.read', readHandler(ctx)],
+    ['repo.search', searchHandler(ctx)],
     ['test.run', testHandler(ctx)],
     [
       'verdict.submit',
@@ -115,6 +137,141 @@ export function verifierHandlers(ctx: HandlerContext): Map<ToolName, ToolHandler
       },
     ],
   ]);
+}
+
+/**
+ * A planner reads and runs the checks, and writes one thing: the plan.
+ *
+ * Note what is absent: repo.write. The planner cannot start building while it
+ * is supposed to be deciding what to build, and that is a grant, not an
+ * instruction — an agent that can write will write.
+ */
+export function plannerHandlers(ctx: HandlerContext): Map<ToolName, ToolHandler> {
+  return new Map<ToolName, ToolHandler>([
+    ['repo.read', readHandler(ctx)],
+    ['repo.search', searchHandler(ctx)],
+    ['test.run', testHandler(ctx)],
+    [
+      'plan.submit',
+      async ({ args }) => {
+        const facts = ctx.author;
+        const spent = facts?.spent() ?? { tokensIn: 0, tokensOut: 0, usd: 0 };
+        const plan = acceptPlan({
+          ...(args as Record<string, unknown>),
+          author: {
+            agent: facts?.agent ?? 'unknown',
+            vendor: facts?.vendor ?? 'local',
+            model: facts?.model ?? 'unknown',
+          },
+          cost: spent,
+        });
+        ctx.onPlan?.(plan);
+        return {
+          recorded: true,
+          criteria: plan.criteria.length,
+          openQuestions: plan.openQuestions.length,
+          // Said back to the model so it stops rather than continuing to
+          // explore: the next thing that happens is a human reading this.
+          next:
+            plan.openQuestions.length > 0
+              ? 'Your plan is recorded and waiting for a human, who must answer your open ' +
+                'questions before anything is built. You are done; stop here.'
+              : 'Your plan is recorded and waiting for a human to approve it. You are done; stop here.',
+        };
+      },
+    ],
+  ]);
+}
+
+/**
+ * A reviewer that has chosen to fix what it found.
+ *
+ * This is a produce-kind task under the reviewer's identity, which is why it
+ * holds repo.write and why it does NOT hold verdict.submit: the judgment was
+ * recorded by the verify task that came before, and a task that writes the
+ * code does not also get to record the verdict on it.
+ */
+export function fixerHandlers(ctx: HandlerContext): Map<ToolName, ToolHandler> {
+  return new Map<ToolName, ToolHandler>([
+    ['repo.read', readHandler(ctx)],
+    ['repo.search', searchHandler(ctx)],
+    [
+      'repo.write',
+      async ({ args }) => {
+        const { path, content } = args as { path: string; content: string };
+        await ctx.worktree.write(path, content);
+        return { written: path, bytes: content.length };
+      },
+    ],
+    ['test.run', testHandler(ctx)],
+  ]);
+}
+
+/**
+ * Searching, which is the cheapest tool in the catalog by a wide margin.
+ *
+ * Without it an agent discovers a codebase by opening files one at a time, and
+ * every file it opens stays in the transcript for the rest of the task. A real
+ * run read 57 files into a 168k-token context before it ran out of money,
+ * having written almost nothing. Most of those reads were answering "where
+ * does this live", which is one search.
+ *
+ * `git grep` rather than a filesystem walk: it searches only tracked files, so
+ * node_modules, build output and anything gitignored are excluded for free,
+ * and it skips binaries rather than dumping them into the context.
+ */
+function searchHandler(ctx: HandlerContext): ToolHandler {
+  const LIMIT = 60;
+  return async ({ args }) => {
+    const { pattern, glob, literal } = args as {
+      pattern: string;
+      glob?: string;
+      literal?: boolean;
+    };
+
+    const argv = [
+      'grep',
+      '--no-color',
+      '-n', // line numbers
+      '-I', // never match inside binary files
+      literal === true ? '-F' : '-E',
+      `--max-count=${LIMIT}`,
+      '-e',
+      pattern,
+    ];
+    if (glob !== undefined && glob !== '') argv.push('--', glob);
+
+    const result = await ctx.worktree.git.tryRun(...argv);
+
+    // git grep exits 1 for "no matches", which is an answer rather than a
+    // failure. Anything else with no output is a real problem worth saying.
+    if (!result.ok && result.stdout.trim() === '') {
+      const stderr = result.stderr.trim();
+      if (stderr !== '' && !/^fatal: /.test(stderr) === false) {
+        return { pattern, matches: [], error: stderr.split('\n')[0] };
+      }
+      return { pattern, matches: [], note: 'nothing matched' };
+    }
+
+    const lines = result.stdout.split('\n').filter((l) => l !== '');
+    const matches = lines.slice(0, LIMIT).map((line) => {
+      const m = /^([^:]+):(\d+):(.*)$/.exec(line);
+      return m === null
+        ? { text: line.slice(0, 300) }
+        : { path: m[1]!, line: Number(m[2]), text: m[3]!.trim().slice(0, 300) };
+    });
+
+    return {
+      pattern,
+      matches,
+      files: [...new Set(matches.map((m) => ('path' in m ? m.path : undefined)).filter(Boolean))],
+      // Said rather than silently dropped: an agent that thinks it saw
+      // everything will conclude something does not exist.
+      ...(lines.length > LIMIT
+        ? { truncated: `showing ${LIMIT} of ${lines.length}+ matches; narrow the pattern or set glob` }
+        : {}),
+    };
+  };
 }
 
 function readHandler(ctx: HandlerContext): ToolHandler {

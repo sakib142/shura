@@ -1,130 +1,84 @@
 /**
- * Verifying one change request.
+ * Verifying one change, for the eval harness.
  *
- * Extracted so the eval harness measures the same code path production uses.
- * A probe that runs its own copy of the verify step measures the copy.
+ * This is a thin wrapper over `reviewBranch` — the same function the real flow
+ * calls — and that is the whole point of it. It used to be a parallel
+ * implementation, and the two drifted: `reviewBranch` gained structured output
+ * so a CLI-driven reviewer could return a verdict at all, and this did not. The
+ * eval was measuring a path production had stopped using, and would have
+ * reported every seeded fault as missed while the reviewer was working fine.
+ *
+ * A measurement that silently measures the wrong thing is worse than no
+ * measurement, so there is now only one implementation and this adapts to it.
  */
 
 import type { Pool } from 'pg';
-import {
-  acceptVerdict,
-  type AcceptedVerdict,
-  type RoleDefinition,
-  type ToolName,
-} from '@shura/core';
-import type { AgentEvent, AgentRuntime, ChangeRequestRef, ToolCallRequest } from '@shura/ports';
-import { Worktree } from '@shura/sandbox';
-import type { LocalVcs } from '@shura/connectors';
+import type { AcceptedVerdict, RoleDefinition } from '@shura/core';
+import type { AgentRuntime, ChangeRequestRef, Vcs } from '@shura/ports';
 import { PgAuditSink, PgEffectStore } from '@shura/db';
-import { McpToolGateway, resolveGrants, type ToolHandler } from '@shura/tool-gateway';
-import { verifierHandlers } from './handlers.js';
+import { reviewBranch } from './build-flow.js';
+import type { StreamEvent } from './stream.js';
 
 export interface VerifyOptions {
   readonly pool: Pool;
   readonly repoDir: string;
   readonly checkCommand: readonly string[];
-  readonly vcs: LocalVcs;
+  /** Produces the diff and runs the checks. Any implementation of the port. */
+  readonly vcs: Vcs;
   readonly ref: ChangeRequestRef;
-  readonly workItem: { id: string; key: string; criteria: readonly string[] };
-  readonly verifier: { runtime: AgentRuntime; role: RoleDefinition; name: string };
-  readonly taskId: string;
+  readonly workItem: { readonly id: string; readonly key: string; readonly criteria: readonly string[] };
+  readonly verifier: { readonly runtime: AgentRuntime; readonly role: RoleDefinition; readonly name: string };
+  // No taskId: reviewBranch creates and finishes its own verify task, so one
+  // passed in here would be an orphan row and a parameter that lies.
   readonly attempt: number;
-  readonly onEvent?: (e: AgentEvent) => void;
+  readonly onEvent?: (e: StreamEvent) => void;
 }
 
 export interface VerifyResult {
   readonly verdict?: AcceptedVerdict;
-  readonly spend: { tokensIn: number; tokensOut: number; usd: number };
   readonly checksPassed: boolean;
+  readonly spend: { readonly tokensIn: number; readonly tokensOut: number; readonly usd: number };
+  readonly error?: string;
 }
 
 export async function verifyChange(o: VerifyOptions): Promise<VerifyResult> {
-  const emit = o.onEvent ?? (() => {});
+  const emit = o.onEvent ?? ((): void => {});
   const diff = await o.vcs.getDiff(o.ref);
   const checks = await o.vcs.runChecks(o.ref);
 
-  const worktree = await Worktree.create({
+  const review = await reviewBranch({
+    pool: o.pool,
     repoDir: o.repoDir,
+    checkCommand: o.checkCommand,
+    reviewer: o.verifier,
+    // A review needs something to judge against, not a plans row. The harness
+    // seeds faults into a fixture rather than planning them, so this is the
+    // context that work would have had.
+    plan: {
+      workItemId: o.workItem.id,
+      workItemKey: o.workItem.key,
+      title: o.workItem.key,
+      understanding: 'A change to an existing repository, under review.',
+      approach: 'Judge the diff against the acceptance criteria.',
+      files: [],
+      outOfScope: [],
+    },
+    attempt: o.attempt,
     branch: o.ref.branch,
-    taskId: o.taskId,
-    claimedBranches: [],
+    criteria: o.workItem.criteria,
+    diff: diff.text,
+    checks,
+    audit: new PgAuditSink(o.pool),
+    effects: new PgEffectStore(o.pool),
+    emit,
   });
 
-  let verdict: AcceptedVerdict | undefined;
-  let spend = { tokensIn: 0, tokensOut: 0, usd: 0 };
-
-  try {
-    const gateway = new McpToolGateway({
-      handlers: verifierHandlers({
-        worktree,
-        pool: o.pool,
-        workItemId: o.workItem.id,
-        workItemKey: o.workItem.key,
-        checkCommand: o.checkCommand,
-        criterionCount: o.workItem.criteria.length,
-        onVerdict: (v) => { verdict = v; },
-        verifier: {
-          agent: o.verifier.name,
-          vendor: o.verifier.runtime.vendor,
-          model: o.verifier.role.model?.model ?? 'unknown',
-          spent: () => spend,
-        },
-      }) as Map<ToolName, ToolHandler>,
-      audit: new PgAuditSink(o.pool),
-      effects: new PgEffectStore(o.pool),
-      grantsFor: () => resolveGrants(o.verifier.role),
-    });
-
-    const invoke = async (tool: string, args: unknown) => {
-      const req: ToolCallRequest = {
-        taskId: o.taskId,
-        agentId: o.verifier.name,
-        roleKind: 'verify',
-        grants: o.verifier.role.tools,
-        tool,
-        args,
-        attempt: o.attempt,
-      };
-      return gateway.call(req);
-    };
-
-    for await (const event of o.verifier.runtime.run({
-      role: o.verifier.role,
-      context: {
-        workItemKey: o.workItem.key,
-        artifactType: 'code_change',
-        acceptanceCriteria: o.workItem.criteria,
-        attempt: o.attempt,
-        diff: diff.text,
-        checkResults: { ok: checks.ok, summary: checks.summary, output: checks.output },
-      },
-      tools: o.verifier.role.tools,
-      limits: {
-        maxMinutes: o.verifier.role.limits.max_minutes,
-        maxTokens: o.verifier.role.limits.max_tokens,
-        maxUsd: o.verifier.role.limits.max_usd,
-      },
-      signal: AbortSignal.timeout(o.verifier.role.limits.max_minutes * 60_000),
-      invoke,
-    })) {
-      if (event.t === 'usage') {
-        spend = {
-          tokensIn: spend.tokensIn + event.tokensIn,
-          tokensOut: spend.tokensOut + event.tokensOut,
-          usd: event.usd,
-        };
-      }
-      emit(event);
-    }
-  } finally {
-    await worktree.destroy();
-  }
-
   return {
-    ...(verdict === undefined ? {} : { verdict }),
-    spend,
+    ...(review.verdict === undefined ? {} : { verdict: review.verdict }),
     checksPassed: checks.ok,
+    // reviewBranch reports what the run cost; the token split is not something
+    // the harness divides by, so the dollar figure is what is carried through.
+    spend: { tokensIn: 0, tokensOut: 0, usd: review.usd },
+    ...(review.error === undefined ? {} : { error: review.error }),
   };
 }
-
-export { acceptVerdict };

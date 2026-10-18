@@ -9,7 +9,9 @@
  * under its own credential, and is not reachable from anything an agent holds.
  */
 
-import { Git, agentIdentity } from '@shura/git';
+import { randomBytes } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
+import { Git, agentIdentity, redactSecrets } from '@shura/git';
 import { Worktree } from '@shura/sandbox';
 import type { ChangeRequestRef, CheckRun, Diff, MergeOutcome, MergeQueue, Vcs } from '@shura/ports';
 
@@ -43,6 +45,40 @@ export class GitHubError extends Error {
   }
 }
 
+/**
+ * The repository's own default branch.
+ *
+ * Asked rather than assumed. Everything here defaults to "main", and a
+ * repository that defaults to "master" or "develop" would otherwise fail with a
+ * 404 on the base ref — after the clone, and only if the operator happened not
+ * to pass --base. The answer is one unauthenticated-shaped GET and it removes a
+ * whole class of confusing first-run failure.
+ *
+ * Returns undefined rather than throwing: a lookup that fails should fall back
+ * to the configured default, not stop the run.
+ */
+export async function githubDefaultBranch(o: {
+  readonly owner: string;
+  readonly repo: string;
+  readonly token: string;
+  readonly fetch?: typeof fetch;
+}): Promise<string | undefined> {
+  try {
+    const res = await (o.fetch ?? fetch)(`https://api.github.com/repos/${o.owner}/${o.repo}`, {
+      headers: {
+        Authorization: `Bearer ${o.token}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+    if (!res.ok) return undefined;
+    const branch = ((await res.json()) as { default_branch?: unknown }).default_branch;
+    return typeof branch === 'string' && branch !== '' ? branch : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export class GitHubVcs implements Vcs {
   readonly #o: GitHubOptions;
   readonly #fetch: typeof fetch;
@@ -59,9 +95,14 @@ export class GitHubVcs implements Vcs {
   /** The local clone the worktrees come from. Cloned once, fetched after. */
   async repoDir(): Promise<string> {
     const dir = `${this.#o.workDir}/${this.#o.repo}.git`;
-    const git = new Git(this.#o.workDir);
     const exists = await new Git(dir).tryRun('rev-parse', '--git-dir');
     if (exists.ok) return dir;
+
+    // git runs with workDir as its cwd, and on a first run that directory does
+    // not exist yet — which surfaces as a bare ENOENT from the clone rather
+    // than anything that names the real problem.
+    await mkdir(this.#o.workDir, { recursive: true });
+    const git = new Git(this.#o.workDir);
     // The token goes in the remote URL, which is why it is never logged: Git
     // errors echo the command, and a URL-embedded credential would land in the
     // audit trail.
@@ -79,6 +120,51 @@ export class GitHubVcs implements Vcs {
     const dir = await this.repoDir();
     const spec = ref === '*' ? '+refs/heads/*:refs/heads/*' : `+refs/heads/${ref}:refs/heads/${ref}`;
     await new Git(dir).run('fetch', '--prune', 'origin', spec);
+  }
+
+/**
+   * Proves the token can write, by writing.
+   *
+   * GitHub's REST permissions block describes the **account**, not the token: a
+   * fine-grained PAT with no Contents:write still reports `push: true` for a
+   * repository the account owns. We found that out the hard way, so the only
+   * honest check is a real write, and the cheapest harmless one is a ref
+   * created and immediately deleted.
+   *
+   * The probe branch sits under the same `shura/` prefix the real branch will,
+   * so a ruleset restricting that namespace is tested too rather than being
+   * discovered later.
+   *
+   * Throws if the write is refused. Returns the name of a probe branch it could
+   * not clean up, so the caller can mention it rather than leaving litter in
+   * someone's repository unannounced.
+   */
+  async assertCanWrite(): Promise<{ readonly leftover?: string }> {
+    const sha = await this.#shaOf(this.base);
+    const branch = `shura/write-probe-${randomBytes(4).toString('hex')}`;
+
+    const created = await this.#call('/git/refs', {
+      method: 'POST',
+      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha }),
+    });
+    if (!created.ok) {
+      throw new GitHubError(
+        created.status,
+        (await created.text()).slice(0, 300),
+        `Could not create a branch in ${this.#o.owner}/${this.#o.repo}, so nothing could be ` +
+          'pushed later either.\n' +
+          'A fine-grained token needs Contents: read and write, and Pull requests: read and ' +
+          'write. A classic token needs the "repo" scope — "public_repo" is not enough for a ' +
+          'private repository.\n' +
+          'If the token is right, check whether a ruleset restricts creating branches under ' +
+          '"shura/".',
+      );
+    }
+
+    const removed = await this.#call(`/git/refs/heads/${encodeURIComponent(branch)}`, {
+      method: 'DELETE',
+    });
+    return removed.ok ? {} : { leftover: branch };
   }
 
   async createBranch(from: string, name: string): Promise<void> {
@@ -109,8 +195,10 @@ export class GitHubVcs implements Vcs {
       'push', this.#cloneUrl(), `refs/heads/${branch}:refs/heads/${branch}`,
     );
     if (!push.ok) {
-      // The URL carries the token, so it must never reach an error message.
-      throw new GitHubError(0, `could not push ${branch}`, redactUrl(push.stderr));
+      // Already redacted by GitError, which does it for every git failure
+      // rather than relying on each caller to remember. Kept because this
+      // string is about to be thrown, and defence in depth is cheap here.
+      throw new GitHubError(0, `could not push ${branch}`, redactSecrets(push.stderr));
     }
   }
 
@@ -343,7 +431,4 @@ export class GitHubMergeQueue implements MergeQueue {
   }
 }
 
-/** Strips a token out of anything git echoed back. */
-function redactUrl(text: string): string {
-  return text.replace(/https:\/\/[^@\s]+@/g, 'https://[redacted]@');
-}
+

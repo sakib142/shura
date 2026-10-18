@@ -25,12 +25,8 @@ import type {
   Vcs,
   Tracker,
   TrackerState,
-  AgentEvent,
   AgentRuntime,
   ChangeRequestRef,
-  RunLimits,
-  TaskContext,
-  ToolCallRequest,
 } from '@shura/ports';
 import { agentIdentity } from '@shura/git';
 import { Worktree } from '@shura/sandbox';
@@ -38,12 +34,8 @@ import { LocalMergeQueue, LocalVcs } from '@shura/connectors';
 import { PgAuditSink, PgClaims, PgEffectStore } from '@shura/db';
 import { McpToolGateway, resolveGrants, type ToolHandler } from '@shura/tool-gateway';
 import { producerHandlers, verifierHandlers } from './handlers.js';
-
-export type StreamEvent =
-  | { readonly kind: 'phase'; readonly state: ArtifactState; readonly detail: string }
-  | { readonly kind: 'agent'; readonly actor: string; readonly event: AgentEvent }
-  | { readonly kind: 'note'; readonly text: string }
-  | { readonly kind: 'verdict'; readonly decision: string; readonly detail: string };
+import { drive, limitsOf, modelOf } from './drive.js';
+import { recorder, type StreamEvent } from './stream.js';
 
 export interface RunOptions {
   readonly pool: Pool;
@@ -76,20 +68,9 @@ export interface RunOutcome {
 export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
   const consume = opts.onEvent ?? (() => {});
 
-  // Every event is persisted as well as streamed. A run that only prints to a
-  // terminal leaves nothing to look at afterwards, and nothing for anything
-  // else to watch while it happens.
-  const emit = (e: StreamEvent): void => {
-    consume(e);
-    void opts.pool
-      .query(
-        `INSERT INTO events (work_item_id, type, payload)
-         SELECT id, $2, $3::jsonb FROM work_items WHERE key = $1`,
-        [opts.workItemKey, eventType(e), JSON.stringify(e)],
-      )
-      // Recording must never break a run that is otherwise working.
-      .catch(() => {});
-  };
+  // A second copy of this insert used to live here, unserialised, and would
+  // have forked the hash chain the same way the planner's did. One writer.
+  const emit = recorder(opts.pool, opts.workItemKey, consume);
   const cap = opts.loopCap ?? 3;
   const vcsOpts = { repoDir: opts.repoDir, pool: opts.pool, checkCommand: opts.checkCommand };
   const localVcs = new LocalVcs(vcsOpts);
@@ -219,7 +200,7 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
         grantsFor: () => resolveGrants(opts.producer.role),
       });
 
-      usd += await drive(opts.producer.runtime, {
+      usd += (await drive(opts.producer.runtime, {
         role: opts.producer.role,
         context: {
           workItemKey: item.key,
@@ -235,7 +216,7 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
         kind: 'produce',
         gateway,
         emit: (e) => emit({ kind: 'agent', actor: opts.producer.name, event: e }),
-      });
+      })).usd;
 
       const dirty = await produceWt.git.tryRun('status', '--porcelain');
       if (dirty.stdout.trim() !== '') {
@@ -322,7 +303,7 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
         grantsFor: () => resolveGrants(opts.verifier.role),
       });
 
-      usd += await drive(opts.verifier.runtime, {
+      usd += (await drive(opts.verifier.runtime, {
         role: opts.verifier.role,
         context: {
           workItemKey: item.key,
@@ -348,7 +329,7 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
           }
           emit({ kind: 'agent', actor: opts.verifier.name, event: e });
         },
-      });
+      })).usd;
     } finally {
       await verifyWt.destroy();
     }
@@ -412,67 +393,8 @@ export async function runWorkItem(opts: RunOptions): Promise<RunOutcome> {
 
 /* ------------------------------------------------------------------ helpers */
 
-interface DriveOptions {
-  role: RoleDefinition;
-  context: TaskContext;
-  tools: readonly string[];
-  limits: RunLimits;
-  taskId: string;
-  agentId: string;
-  kind: 'produce' | 'verify';
-  gateway: McpToolGateway;
-  emit: (e: AgentEvent) => void;
-}
-
-async function drive(runtime: AgentRuntime, o: DriveOptions): Promise<number> {
-  let usd = 0;
-  const invoke = async (tool: string, args: unknown) => {
-    const req: ToolCallRequest = {
-      taskId: o.taskId,
-      agentId: o.agentId,
-      roleKind: o.kind,
-      grants: o.tools,
-      tool,
-      args,
-      attempt: o.context.attempt,
-    };
-    return o.gateway.call(req);
-  };
-
-  for await (const event of runtime.run({
-    role: o.role,
-    context: o.context,
-    tools: o.tools,
-    limits: o.limits,
-    signal: AbortSignal.timeout(o.limits.maxMinutes * 60_000),
-    invoke,
-  })) {
-    if (event.t === 'usage') usd = event.usd;
-    o.emit(event);
-  }
-  return usd;
-}
-
-function modelOf(role: RoleDefinition): string {
-  return role.model?.model ?? 'deterministic';
-}
-
-function limitsOf(role: RoleDefinition): RunLimits {
-  return {
-    maxMinutes: role.limits.max_minutes,
-    maxTokens: role.limits.max_tokens,
-    maxUsd: role.limits.max_usd,
-  };
-}
-
 function criteriaChecklist(criteria: readonly string[]): string {
   return ['## Acceptance criteria', ...criteria.map((c, i) => `- [ ] [${i}] ${c}`)].join('\n');
-}
-
-/** A short, groupable name for the stream. */
-function eventType(e: StreamEvent): string {
-  if (e.kind === 'agent') return `agent.${e.event.t}`;
-  return e.kind;
 }
 
 function describeFindings(v: AcceptedVerdict): string {

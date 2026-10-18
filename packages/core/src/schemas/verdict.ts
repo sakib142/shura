@@ -14,7 +14,15 @@
  */
 
 import { z } from 'zod';
-import { CRITERION_STATUSES, DECISIONS, SEVERITIES, VENDORS, type Decision } from '../vocabulary.js';
+import { nullsAsAbsent } from './tools.js';
+import {
+  CRITERION_STATUSES,
+  DECISIONS,
+  REVIEWER_ACTIONS,
+  SEVERITIES,
+  VENDORS,
+  type Decision,
+} from '../vocabulary.js';
 
 export const FindingSchema = z.object({
   severity: z.enum(SEVERITIES),
@@ -63,6 +71,15 @@ export const VerdictInputSchema = z.object({
     .default([])
     .describe('Defects outside the acceptance criteria'),
   blockedReason: z.string().min(1).optional().describe('Required when the decision is BLOCKED'),
+  action: z
+    .enum(REVIEWER_ACTIONS)
+    .optional()
+    .describe(
+      'Only when you are not passing it: "return" sends the work back to the agent that wrote ' +
+        'it, "fix" means you would rather correct it yourself. Choose "fix" for defects you can ' +
+        'settle from the diff; choose "return" when the work needs a decision you should not be ' +
+        'making alone. Ignored if your role cannot fix',
+    ),
 });
 export type VerdictInput = z.infer<typeof VerdictInputSchema>;
 
@@ -74,6 +91,8 @@ export const VerdictSubmissionSchema = z.object({
   extraFindings: z.array(FindingSchema).default([]),
   /** Set only with BLOCKED: what stopped the verifier from reaching a verdict. */
   blockedReason: z.string().min(1).optional(),
+  /** What the verifier asks for. Honoured only if its role declares a `fix`. */
+  action: z.enum(REVIEWER_ACTIONS).optional(),
   verifier: z.object({
     agent: z.string().min(1),
     vendor: z.enum(VENDORS),
@@ -189,7 +208,11 @@ export interface AcceptedVerdict extends ResolvedDecision {
 
 /** The single door a verdict enters through: parse, cover, then recompute. */
 export function acceptVerdict(raw: unknown, criterionCount: number): AcceptedVerdict {
-  const parsed = VerdictSubmissionSchema.safeParse(raw);
+  // Nulls read as absence. A vendor's structured output says "not supplied"
+  // with an explicit null — and must, under a strict schema that requires
+  // every key — so a verdict arrives with `finding: null` on every criterion
+  // that is met. Rejecting that would be rejecting a correct verdict.
+  const parsed = VerdictSubmissionSchema.safeParse(nullsAsAbsent(raw));
   if (!parsed.success) {
     throw new VerdictRejected('verdict failed schema validation', parsed.error.issues);
   }

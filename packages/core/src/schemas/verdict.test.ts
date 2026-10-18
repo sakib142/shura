@@ -151,3 +151,56 @@ describe('BLOCKED', () => {
     );
   });
 });
+
+/**
+ * A strict structured-output schema must name every key as required, so a
+ * vendor says "not supplied" with an explicit null rather than by omission.
+ *
+ * A live reviewer returned a correct verdict — every criterion met, no
+ * findings — and it was rejected, because `finding: null` is not an object.
+ * The answer already existed one module away, applied only to tool arguments.
+ */
+describe('a verdict that says "not supplied" with null', () => {
+  const base = {
+    artifactId: 'a1',
+    verifier: { agent: 'rev-01', vendor: 'openai' as const, model: 'default' },
+    cost: { tokensIn: 1, tokensOut: 1, usd: 0 },
+  };
+
+  it('accepts a met criterion whose finding is null', () => {
+    const v = acceptVerdict(
+      {
+        ...base,
+        decision: 'PASS',
+        criteria: [{ index: 0, status: 'met', finding: null }],
+        extraFindings: [],
+        blockedReason: null,
+      },
+      1,
+    );
+    expect(v.decision).toBe('PASS');
+    expect(v.submission.criteria[0]?.finding).toBeUndefined();
+  });
+
+  it('still requires a finding on a criterion that is not met', () => {
+    expect(() =>
+      acceptVerdict(
+        {
+          ...base,
+          decision: 'CHANGES_REQUESTED',
+          criteria: [{ index: 0, status: 'not_met', finding: null }],
+          extraFindings: [],
+        },
+        1,
+      ),
+    ).toThrow(VerdictRejected);
+  });
+
+  it('reads a null extraFindings as none rather than rejecting it', () => {
+    const v = acceptVerdict(
+      { ...base, decision: 'PASS', criteria: [{ index: 0, status: 'met' }], extraFindings: null },
+      1,
+    );
+    expect(v.submission.extraFindings).toEqual([]);
+  });
+});

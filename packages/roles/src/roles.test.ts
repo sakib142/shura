@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { assertVerifierGrantsAreReadOnly, isKnownTool } from '@shura/core';
-import { loadAllRoles, withPrompt } from './index.js';
+import { assertVerifierGrantsAreReadOnly, fixRoleOf, isKnownTool } from '@shura/core';
+import { availableDomains, loadAllRoles, withPrompt } from './index.js';
 
 const roles = loadAllRoles();
 
 describe('the shipped role definitions', () => {
   it('all load and satisfy the invariant', () => {
     expect([...roles.keys()].sort()).toEqual([
-      'backend-developer',
       'backlog-author',
       'backlog-reviewer',
-      'code-reviewer',
+      'builder',
       'design-analyst',
-      'frontend-developer',
       'merge-queue',
+      'planner',
+      'reviewer',
     ]);
   });
 
@@ -40,8 +40,7 @@ describe('the shipped role definitions', () => {
   // Rule 1, as shipped: a producer and its default verifier must be able to pair.
   it('pair each producer with a verifier on a different vendor', () => {
     const pairs: Array<[string, string]> = [
-      ['backend-developer', 'code-reviewer'],
-      ['frontend-developer', 'code-reviewer'],
+      ['builder', 'reviewer'],
       ['backlog-author', 'backlog-reviewer'],
       ['design-analyst', 'backlog-reviewer'],
     ];
@@ -56,8 +55,7 @@ describe('the shipped role definitions', () => {
   // at the exact moment the primary is rate-limited.
   it('never let a verifier fall back onto its producer vendor', () => {
     const pairs: Array<[string, string]> = [
-      ['backend-developer', 'code-reviewer'],
-      ['frontend-developer', 'code-reviewer'],
+      ['builder', 'reviewer'],
       ['backlog-author', 'backlog-reviewer'],
     ];
     for (const [p, v] of pairs) {
@@ -69,34 +67,163 @@ describe('the shipped role definitions', () => {
   });
 });
 
-describe('model identifiers', () => {
-  // Model IDs rot. gpt-5 and gemini-2.5-pro were both configured here and both
-  // had been retired; claude-sonnet-5-5 in the architecture doc never existed.
-  // This test does not prove an ID is live, but it does stop a typo and forces
-  // a conscious edit whenever one changes.
-  const KNOWN: Record<string, readonly string[]> = {
-    anthropic: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'],
-    openai: ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-luna'],
-    google: ['gemini-3.8-flash', 'gemini-4-argon'],
-    local: [],
-  };
+/**
+ * The frontend agent, as shipped.
+ *
+ * Three roles with one flow between them, and the grants are what make the
+ * flow safe rather than the prompts. These assert the grants, because a prompt
+ * saying "you cannot write" is advice and an absent grant is a fact.
+ */
+describe('the three positions', () => {
+  const planner = roles.get('planner')!;
+  const reviewer = roles.get('reviewer')!;
 
-  it('uses only model IDs checked against vendor documentation', () => {
-    for (const role of roles.values()) {
-      const m = role.model;
-      if (m === undefined) continue;
-      if (m.runtime === 'local') continue;
-      expect(KNOWN[m.runtime], `${role.id} runtime`).toContain(m.model);
+  // The planner cannot start building while it is supposed to be deciding what
+  // to build. That is a grant, not an instruction.
+  it('gives the planner no way to write code', () => {
+    expect(planner.tools).not.toContain('repo.write');
+    expect(planner.tools).toContain('plan.submit');
+    expect(planner.kind).toBe('produce');
+  });
+
+  it('keeps the reviewer read-only while it reviews, even though it may fix', () => {
+    expect(reviewer.kind).toBe('verify');
+    expect(reviewer.tools).not.toContain('repo.write');
+    expect(() => assertVerifierGrantsAreReadOnly(reviewer.id, reviewer.tools)).not.toThrow();
+  });
+
+  it('puts the reviewer write grants on a separate produce role', () => {
+    const fix = fixRoleOf(reviewer)!;
+    expect(fix.kind).toBe('produce');
+    expect(fix.tools).toContain('repo.write');
+    // The judgment was recorded by the verify task. A task that writes the code
+    // does not also get to record the verdict on it.
+    expect(fix.tools).not.toContain('verdict.submit');
+  });
+
+  it('resolves the fix prompt as well as the review prompt', () => {
+    const resolved = withPrompt(reviewer);
+    expect(resolved.fix?.instructions).not.toMatch(/^prompts\//);
+    expect(fixRoleOf(resolved)!.instructions).toContain('You now hold write access');
+  });
+
+  it('tells the planner what makes a criterion checkable', () => {
+    const p = withPrompt(planner).instructions;
+    expect(p).toMatch(/Given .*when .*then/i);
+    expect(p).toContain('open question');
+  });
+
+  it('tells the reviewer when to fix and when to send it back', () => {
+    const p = withPrompt(reviewer).instructions;
+    expect(p).toContain('Fix, or send it back');
+    expect(p).toMatch(/return.*when you are unsure|unsure/i);
+  });
+});
+
+/**
+ * Position and domain are different kinds of thing, deliberately.
+ *
+ * The role describes the POSITION — what planning is, what reviewing is — and
+ * is what the grants are built around. The overlay describes the DOMAIN, the
+ * house rules of a kind of codebase, and changes nothing a gateway can check.
+ *
+ * Before this split there were five code roles for two domains, backend could
+ * neither plan nor review, and `backend-developer` was the generic builder
+ * prompt wearing a domain name.
+ */
+describe('domains as an overlay', () => {
+  it('ships a domain for each kind of codebase it claims to know', () => {
+    expect(availableDomains()).toEqual(['backend', 'frontend']);
+  });
+
+  it('leaves the prompt alone when no domain is asked for', () => {
+    const bare = withPrompt(roles.get('builder')!).instructions;
+    expect(bare).not.toMatch(/design token/i);
+    expect(bare).not.toMatch(/replica/i);
+  });
+
+  it('appends the house rules when one is', () => {
+    const frontend = withPrompt(roles.get('builder')!, undefined, 'frontend').instructions;
+    expect(frontend).toMatch(/design token/i);
+    expect(frontend).toMatch(/accessible name/i);
+
+    const backend = withPrompt(roles.get('builder')!, undefined, 'backend').instructions;
+    expect(backend).toMatch(/transaction boundary/i);
+    expect(backend).not.toMatch(/design token/i);
+  });
+
+  it('gives every position the same overlay', () => {
+    for (const id of ['planner', 'builder', 'reviewer']) {
+      const p = withPrompt(roles.get(id)!, undefined, 'frontend').instructions;
+      expect(p, id).toMatch(/design token/i);
     }
   });
 
-  it('keeps every fallback on a vendor different from the primary', () => {
+  /**
+   * A reviewer that knew the house rules while judging and forgot them while
+   * fixing would write the very thing it had just flagged.
+   */
+  it('gives the reviewer fix prompt the overlay too', () => {
+    const resolved = withPrompt(roles.get('reviewer')!, undefined, 'frontend');
+    expect(fixRoleOf(resolved)!.instructions).toMatch(/design token/i);
+  });
+
+  // Silently running without the house rules produces work that looks right
+  // and is not, which is the expensive kind of wrong.
+  it('refuses a domain it does not have rather than ignoring it', () => {
+    expect(() => withPrompt(roles.get('builder')!, undefined, 'mobile')).toThrow(/no domain/);
+    expect(() => withPrompt(roles.get('builder')!, undefined, 'mobile')).toThrow(/frontend/);
+  });
+
+  // The position prompts must stay domain-neutral, or the overlay is pointless.
+  it('keeps the position prompts free of any one domain', () => {
+    for (const id of ['planner', 'builder', 'reviewer']) {
+      const p = withPrompt(roles.get(id)!).instructions;
+      expect(p, `${id} mentions design tokens`).not.toMatch(/design token/i);
+      expect(p, `${id} mentions aria`).not.toMatch(/\baria\b/i);
+      expect(p, `${id} mentions migrations`).not.toMatch(/\bmigration\b/i);
+    }
+  });
+});
+
+describe('model identifiers', () => {
+  /**
+   * Roles ask for the account default rather than naming a model.
+   *
+   * Shura drives the vendor CLIs, authenticated by the user's subscription,
+   * and a subscription does not serve every model. Naming one it does not is
+   * not a downgrade but a hard failure — the live CLI answers "The
+   * 'gpt-5.1-codex' model is not supported when using Codex with a ChatGPT
+   * account" and the run ends there.
+   *
+   * It also stops a shipped default from deciding what someone else's
+   * subscription spends its quota on.
+   */
+  it('lets the subscription choose the model', () => {
     for (const role of roles.values()) {
-      const fallback = role.model?.fallback;
-      if (fallback === undefined) continue;
-      const [vendor, model] = fallback.split('/');
-      expect(vendor, `${role.id} fallback vendor`).not.toBe(role.model?.runtime);
-      expect(KNOWN[vendor ?? ''], `${role.id} fallback`).toContain(model);
+      if (role.model === undefined) continue;
+      expect(role.model.model, `${role.id}`).toBe('default');
+    }
+  });
+
+  // Model IDs rot — gpt-5 and gemini-2.5-pro were both configured here and
+  // both had been retired. Anyone overriding the default in their own config
+  // is on their own, but nothing shipped should carry a name that can expire.
+  it('ships no model name that can go stale', () => {
+    for (const role of roles.values()) {
+      const named = role.model?.model ?? 'default';
+      expect(named, `${role.id}`).not.toMatch(/^(claude|gpt|gemini)-/);
+    }
+  });
+
+  /**
+   * `fallback` was declared in these files and never implemented — nothing
+   * read it. A field that looks like a safety net and is not is worse than no
+   * field, so it is gone rather than left to be trusted.
+   */
+  it('declares no fallback, because nothing ever honoured one', () => {
+    for (const role of roles.values()) {
+      expect(role.model?.fallback, `${role.id}`).toBeUndefined();
     }
   });
 });
@@ -105,9 +232,9 @@ describe('prompt resolution', () => {
   // Leaving this unresolved sends the model a filename as its entire system
   // prompt. The agent still runs; it just has no instructions.
   it('replaces the instructions path with the prompt itself', () => {
-    const role = withPrompt(roles.get('code-reviewer')!);
+    const role = withPrompt(roles.get('reviewer')!);
     expect(role.instructions).not.toMatch(/^prompts\//);
-    expect(role.instructions).toContain('You cannot edit anything');
+    expect(role.instructions).toContain('you cannot edit anything');
   });
 
   it('resolves a prompt for every shipped role', () => {
@@ -119,7 +246,7 @@ describe('prompt resolution', () => {
 
   // The reviewer prompt is the single biggest lever on the eval numbers.
   it('gives the reviewer explicit categories rather than a confidence threshold', () => {
-    const p = withPrompt(roles.get('code-reviewer')!).instructions;
+    const p = withPrompt(roles.get('reviewer')!).instructions;
     expect(p).toContain('## What to report');
     expect(p).toContain('## What to skip');
     expect(p).toMatch(/blocker/);

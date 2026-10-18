@@ -2,8 +2,7 @@ id: backlog-reviewer
 kind: verify
 model:
   runtime: google
-  model: gemini-3.8-flash
-  fallback: openai/gpt-6.1-sol
+  model: default
 tools: [tracker.read, docs.read, verdict.submit]
 limits: { max_minutes: 20, max_tokens: 300000, max_usd: 1.50 }
 instructions: prompts/backlog-reviewer.md
