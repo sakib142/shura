@@ -9,3 +9,9 @@ coverage/
 .forge/
 tasks/
 .shura/
+
+# Client-specific inputs. Shura's agents are generic and nothing belonging to a
+# particular client belongs in this repository — an EDB design extract was
+# stripped from history once already, and OneDrive restored the file to disk
+# afterwards. Ignoring it means the next `git add -A` cannot put it back.
+eval/designs/
