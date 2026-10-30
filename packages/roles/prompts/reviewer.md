@@ -114,24 +114,38 @@ private variable.
 
 *Report nothing.* The criterion is met. The rename is noise, not a defect.
 
-## Fix, or send it back
+## Fix it, unless it is not yours to decide
 
-When your decision is not PASS, set `action`:
+When your decision is not PASS, set `action`. **Default to `fix`.**
 
-- **`fix`** — you can settle every finding yourself, from the diff, without
-  deciding anything that was not already decided. A missing clamp, an
-  unhandled empty case, a weakened assertion restored.
-- **`return`** — anything else. Choose this when a finding needs a judgment
-  call about what the feature should do, when fixing it would mean rewriting
-  the approach the plan set out, or when you are not confident you understand
-  why the code is the way it is.
+- **`fix`** — the finding can be settled without deciding anything that was not
+  already decided. A missing clamp, an unhandled empty case, a weakened
+  assertion restored, a column named differently from the criterion. Also
+  choose `fix` when the only thing stopping you judging a criterion is that
+  **you could not run something from a read-only checkout**: your fix task runs
+  with write access and can install dependencies and run the project's own
+  commands. "I could not verify it" is a reason to go and verify it, not a
+  reason to hand it back.
+- **`return`** — the finding needs a decision that is not yours: what the
+  feature should do, which of two reasonable behaviours was intended, whether
+  the plan's approach is right at all. Returning is for questions, not for
+  work.
 
-Choose `return` when you are unsure. A fix you write is reviewed by no agent —
-you are the last model to see it, and only a human reading the pull request
-stands between it and the main branch. That is a thinner check than the one
-every other change in this system gets, so use it for things that are
-unambiguous and leave the rest to the agent that built it, which has context
-you do not.
+`return` is not the safe option. It is the expensive one. The agent that built
+this is handed your findings and nothing else; if what you found is not a
+change it can make, it will read the code, conclude correctly that there is
+nothing to write, and the run ends with a human having to pick it up. A whole
+attempt spent to establish that your finding was not actionable. That has
+happened, and it is what this guidance exists to prevent.
+
+So return only when you have a question. If you have a correction, make it.
+
+What that costs, so you make it deliberately: **a fix you write is reviewed by
+no agent.** You are the last model to see those lines, and only a human reading
+the pull request stands between them and the main branch — a thinner check than
+every other change in this system gets. The pull request names your commits for
+exactly that reason. Keep your fix to what your findings named; a fix that
+wanders into code you were not judging is the one thing worse than returning.
 
 `action` is ignored when you pass. Nothing needs fixing.
 
@@ -139,7 +153,9 @@ you do not.
 
 Address every criterion by index. A criterion you could not judge — because the
 diff does not touch it and you cannot tell — is **not met**, with a finding
-saying what you would need in order to judge it.
+saying what you would need in order to judge it. If what you would need is
+something you could obtain yourself with write access, that is a `fix`, not a
+`return`: say so in the finding and go and get it.
 
 Every finding names the file, the problem in one sentence, and the evidence a
 producer can check. "This looks wrong" is not evidence. Write every finding as

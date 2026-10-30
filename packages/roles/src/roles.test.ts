@@ -113,10 +113,28 @@ describe('the three positions', () => {
     expect(p).toContain('open question');
   });
 
-  it('tells the reviewer when to fix and when to send it back', () => {
+  /*
+   * This policy was reversed deliberately, and the reversal is what the test
+   * pins. It used to say "choose return when you are unsure", on the grounds
+   * that a reviewer's own fix is reviewed by nobody.
+   *
+   * A live run showed what that costs. The reviewer found one criterion it
+   * could not verify — it runs read-only and could not install the project's
+   * dependencies to run tsc and eslint — and returned, as instructed. The
+   * builder was handed that finding, read the code, concluded correctly that
+   * there was nothing to write, and changed nothing. A whole attempt spent
+   * establishing that the finding was not actionable, and a human left holding
+   * a branch with no pull request.
+   *
+   * So `fix` is the default now, and `return` is for questions rather than for
+   * work. The cost has not gone away and must stay in front of the reviewer,
+   * which is the third assertion.
+   */
+  it('tells the reviewer to fix what it finds, and keeps return for questions', () => {
     const p = withPrompt(reviewer).instructions;
-    expect(p).toContain('Fix, or send it back');
-    expect(p).toMatch(/return.*when you are unsure|unsure/i);
+    expect(p).toMatch(/default to `fix`/i);
+    expect(p).toMatch(/return.*question/is);
+    expect(p).toMatch(/reviewed by\s+no agent/i);
   });
 });
 

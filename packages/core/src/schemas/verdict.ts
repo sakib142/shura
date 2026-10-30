@@ -75,10 +75,13 @@ export const VerdictInputSchema = z.object({
     .enum(REVIEWER_ACTIONS)
     .optional()
     .describe(
-      'Only when you are not passing it: "return" sends the work back to the agent that wrote ' +
-        'it, "fix" means you would rather correct it yourself. Choose "fix" for defects you can ' +
-        'settle from the diff; choose "return" when the work needs a decision you should not be ' +
-        'making alone. Ignored if your role cannot fix',
+      'Only when you are not passing it. Default to "fix": correct what you found yourself. ' +
+        'Choose "fix" for anything that does not need a decision someone else should make — ' +
+        'including a criterion you could not verify only because a read-only checkout could ' +
+        'not run it, since your fix task has write access and can run the project\'s own ' +
+        'commands. Choose "return" only when the finding is a question about what the feature ' +
+        'should do; returning a finding the builder cannot act on costs a whole attempt and ' +
+        'ends in a human picking it up. Ignored if your role cannot fix',
     ),
 });
 export type VerdictInput = z.infer<typeof VerdictInputSchema>;
