@@ -7,7 +7,7 @@
  */
 
 import type { Pool } from 'pg';
-import type { PlanStatus, PlanSubmission, PlannedFile, Vendor } from '@shura/core';
+import type { PlanInput, PlanStatus, PlanSubmission, PlannedFile, Vendor } from '@shura/core';
 
 export interface PlanSource {
   /** Where the work happens, as "owner/name" or a local path. */
@@ -243,10 +243,91 @@ export class PgPlans {
     }
   }
 
+  /**
+   * Replaces the plan body with a revision, keeping the old one.
+   *
+   * Called at the approval gate when the approver answered open questions, so
+   * the criteria the reviewer will judge against are the ones that follow from
+   * those answers rather than the ones written before they were given. The
+   * previous body is appended to `revisions` first — the gate may rewrite the
+   * contract, but not quietly.
+   *
+   * Spend accumulates rather than replaces: the plan cost what it cost to
+   * write plus what it cost to revise, and reporting only the second would
+   * make a revised plan look cheaper than an unrevised one.
+   *
+   * Guarded on `awaiting_approval` for the same reason `decide` is: a plan
+   * already approved has a contract downstream depends on, and a built one has
+   * a branch judged against it.
+   */
+  async revise(
+    planId: string,
+    revised: PlanInput,
+    spend: { readonly tokensIn: number; readonly tokensOut: number; readonly usd: number },
+    revisedBy: string,
+  ): Promise<void> {
+    const { rowCount } = await this.#pool.query(
+      `UPDATE plans SET
+         revisions = revisions || jsonb_build_object(
+           'at', to_jsonb(now()),
+           'by', $7::text,
+           'understanding', to_jsonb(understanding),
+           'approach', to_jsonb(approach),
+           'files', files,
+           'out_of_scope', out_of_scope,
+           'criteria', criteria,
+           'open_questions', open_questions
+         ),
+         understanding  = $2,
+         approach       = $3,
+         files          = $4::jsonb,
+         out_of_scope   = $5::jsonb,
+         criteria       = $6::jsonb,
+         open_questions = $8::jsonb,
+         tokens_in      = tokens_in  + $9,
+         tokens_out     = tokens_out + $10,
+         cost_usd       = cost_usd   + $11
+       WHERE id = $1 AND status = 'awaiting_approval'`,
+      [
+        planId,
+        revised.understanding,
+        revised.approach,
+        JSON.stringify(revised.files),
+        JSON.stringify(revised.outOfScope),
+        JSON.stringify(revised.criteria),
+        revisedBy,
+        JSON.stringify(revised.openQuestions),
+        spend.tokensIn,
+        spend.tokensOut,
+        spend.usd,
+      ],
+    );
+    if (rowCount === 0) {
+      throw new Error(`plan ${planId} is not awaiting approval, so it cannot be revised`);
+    }
+  }
+
   /** Marks an approved plan as carried out, with where the result landed. */
   async built(planId: string, branch: string, changeRequest?: string): Promise<void> {
     await this.#pool.query(
       `UPDATE plans SET status = 'built', branch = $2, change_request = $3 WHERE id = $1`,
+      [planId, branch, changeRequest ?? null],
+    );
+  }
+
+  /**
+   * Records a pull request opened for a plan that did not pass.
+   *
+   * Distinct from `built` on purpose. `built` means the loop carried the plan
+   * out; this means it gave up and left a person a pull request to read. The
+   * status stays `approved`, because the work the plan describes has not been
+   * done to the standard the plan set — and a row that claimed otherwise would
+   * make an escalation indistinguishable from a success in every report built
+   * on this table.
+   */
+  async parked(planId: string, branch: string, changeRequest?: string): Promise<void> {
+    await this.#pool.query(
+      `UPDATE plans SET branch = $2, change_request = $3 WHERE id = $1`,
       [planId, branch, changeRequest ?? null],
     );
   }

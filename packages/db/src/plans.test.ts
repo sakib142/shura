@@ -187,4 +187,91 @@ d('the plan gate', () => {
     expect(stored?.status).toBe('built');
     expect(stored?.changeRequest).toBe('42');
   });
+
+  /*
+   * The bug these name, found by running it rather than by testing it:
+   *
+   * A plan for a new profile field asked which column name to use. The approver
+   * answered `bio`. The answer was recorded and passed to the builder as prose,
+   * and the criteria went on naming `profiles.your_detail` — so the reviewer,
+   * which is shown the criteria and nothing else, would have failed a builder
+   * that did exactly what the approver asked. The gate raised a question and
+   * then overruled the answer.
+   */
+  it('gives the work item the revised criteria, not the ones that were planned', async () => {
+    const item = await newItem('SHURA-20');
+    const id = await plans.record(item, 't1', source, submission);
+
+    await plans.revise(
+      id,
+      {
+        understanding: 'The column is to be called bio, as the approver decided.',
+        approach: 'Add a bio column and a textarea bound to it.',
+        files: [{ path: 'src/orders/OrderList.tsx', reason: 'where the table lives' }],
+        outOfScope: [],
+        criteria: ['Given a signed-in user, when they save, then profiles.bio holds the value'],
+        openQuestions: [],
+      },
+      { tokensIn: 400, tokensOut: 120, usd: 0.0199 },
+      'a-human',
+    );
+    await plans.decide(id, 'approved', 'a-human', ['Call it bio.']);
+
+    const { rows } = await pool.query<{ acceptance_criteria: string[] }>(
+      'SELECT acceptance_criteria FROM work_items WHERE id = $1',
+      [item],
+    );
+    expect(rows[0]?.acceptance_criteria).toEqual([
+      'Given a signed-in user, when they save, then profiles.bio holds the value',
+    ]);
+    // The contract downstream must not still mention the overruled choice.
+    expect(JSON.stringify(rows[0]?.acceptance_criteria)).not.toContain('your_detail');
+  });
+
+  it('keeps the plan it revised, so a rewritten gate is still inspectable', async () => {
+    const id = await plans.record(await newItem('SHURA-21'), 't1', source, submission);
+    await plans.revise(
+      id,
+      {
+        understanding: 'revised',
+        approach: 'revised',
+        files: [{ path: 'src/a.ts', reason: 'why' }],
+        outOfScope: [],
+        criteria: ['Given a thing, when it happens, then the other thing is true'],
+        openQuestions: [],
+      },
+      { tokensIn: 1, tokensOut: 1, usd: 0.01 },
+      'a-human',
+    );
+
+    const { rows } = await pool.query<{ revisions: { criteria: string[]; by: string }[] }>(
+      'SELECT revisions FROM plans WHERE id = $1',
+      [id],
+    );
+    expect(rows[0]?.revisions).toHaveLength(1);
+    expect(rows[0]?.revisions[0]?.criteria).toEqual(submission.criteria);
+    expect(rows[0]?.revisions[0]?.by).toBe('a-human');
+  });
+
+  // Reporting only the revision would make a revised plan look cheaper than one
+  // nobody had to revise.
+  it('adds the revision spend to the plan rather than replacing it', async () => {
+    const id = await plans.record(await newItem('SHURA-22'), 't1', source, submission);
+    await plans.revise(
+      id,
+      { ...submission, openQuestions: [] },
+      { tokensIn: 100, tokensOut: 50, usd: 0.02 },
+      'a-human',
+    );
+    const stored = await plans.get(id);
+    expect(stored?.costUsd).toBeCloseTo(submission.cost.usd + 0.02, 4);
+  });
+
+  it('refuses to revise a plan that has already been approved', async () => {
+    const id = await plans.record(await newItem('SHURA-23'), 't1', source, submission);
+    await plans.decide(id, 'approved', 'a-human', ['no']);
+    await expect(
+      plans.revise(id, { ...submission, openQuestions: [] }, { tokensIn: 0, tokensOut: 0, usd: 0 }, 'a-human'),
+    ).rejects.toThrow(/not awaiting approval/);
+  });
 });

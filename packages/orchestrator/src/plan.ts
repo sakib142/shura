@@ -24,6 +24,7 @@ import {
   PlanInputSchema,
   acceptPlan,
   asJsonSchema,
+  type PlanInput,
   type PlanSubmission,
   type RoleDefinition,
   type ToolName,
@@ -188,6 +189,310 @@ export async function planWorkItem(req: PlanRequest): Promise<PlanOutcome> {
       `${submitted.files.length} file(s), ${submitted.openQuestions.length} open question(s)`,
   });
   return { ok: true, planId, plan: submitted, usd: spend.usd };
+}
+
+export interface RevisePlanRequest {
+  readonly pool: Pool;
+  /** The local clone the planner re-reads. Never written to. */
+  readonly repoDir: string;
+  readonly plan: StoredPlan;
+  /** One per open question, in the order they were asked. */
+  readonly answers: readonly string[];
+  readonly planner: {
+    readonly runtime: AgentRuntime;
+    readonly role: RoleDefinition;
+    readonly name: string;
+  };
+  readonly onEvent?: (e: StreamEvent) => void;
+}
+
+export interface ReviseSpend {
+  readonly tokensIn: number;
+  readonly tokensOut: number;
+  readonly usd: number;
+}
+
+export type ReviseOutcome =
+  | { readonly ok: true; readonly revised: PlanInput; readonly spend: ReviseSpend }
+  | { readonly ok: false; readonly reason: string; readonly spend: ReviseSpend };
+
+/**
+ * The plan, re-derived from the approver's answers.
+ *
+ * An open question is the planner saying the request did not settle something.
+ * Answering it only moved the decision if the answer reaches the acceptance
+ * criteria, because those are the only thing the reviewer is shown. Before this
+ * existed the answers were passed to the builder as prose and the criteria
+ * stood unchanged, so an approver who renamed a column got a plan whose
+ * criteria still named the old one — and a reviewer that failed the builder for
+ * doing as it was told. The gate asked a question and then overruled the answer.
+ *
+ * This runs at approval rather than at build time because `decide` is where the
+ * criteria become the work item's contract. Revising anywhere later would leave
+ * a window in which the stored contract and the approved answers disagree.
+ *
+ * It re-reads the repository, since an answer can send the plan somewhere it has
+ * not looked — "show it on the public profile too" names files the original plan
+ * had no reason to open. That costs a planner call, which is why the caller
+ * confirms the spend first.
+ */
+export async function revisePlan(req: RevisePlanRequest): Promise<ReviseOutcome> {
+  const emit = recorder(req.pool, req.plan.workItemKey, req.onEvent ?? (() => {}));
+  const audit = new PgAuditSink(req.pool);
+  const effects = new PgEffectStore(req.pool);
+
+  emit({
+    kind: 'phase',
+    state: 'draft',
+    detail: `${req.planner.name} revising the plan from ${req.answers.filter((a) => a.trim() !== '').length} answer(s)`,
+  });
+
+  const taskId = await createPlanTask(req.pool, req.plan.workItemId, req.planner.role.id);
+
+  const wt = await Worktree.create({
+    repoDir: req.repoDir,
+    branch: req.plan.base,
+    taskId,
+    claimedBranches: [],
+    detached: true,
+  });
+
+  let submitted: PlanSubmission | undefined;
+  let spend: ReviseSpend = { tokensIn: 0, tokensOut: 0, usd: 0 };
+
+  try {
+    const gateway = new McpToolGateway({
+      handlers: plannerHandlers({
+        worktree: wt,
+        pool: req.pool,
+        workItemId: req.plan.workItemId,
+        workItemKey: req.plan.workItemKey,
+        checkCommand: req.plan.checks,
+        // The criteria it is revising, so a submission that drops them all is
+        // visible as a change rather than looking like a first draft.
+        criterionCount: req.plan.criteria.length,
+        onPlan: (pl) => {
+          submitted = pl;
+        },
+        author: {
+          agent: req.planner.name,
+          vendor: req.planner.runtime.vendor,
+          model: modelOf(req.planner.role),
+          spent: () => spend,
+        },
+      }) as Map<ToolName, ToolHandler>,
+      audit,
+      effects,
+      grantsFor: () => resolveGrants(req.planner.role),
+    });
+
+    const result = await drive(req.planner.runtime, {
+      role: req.planner.role,
+      context: {
+        workItemKey: req.plan.workItemKey,
+        title: req.plan.title,
+        artifactType: 'plan',
+        // What it is revising, not what it must satisfy.
+        acceptanceCriteria: [],
+        request: reviseBrief(req.plan, req.answers),
+        attempt: 1,
+      },
+      tools: req.planner.role.tools,
+      limits: limitsOf(req.planner.role),
+      workdir: wt.dir,
+      outputSchema: asJsonSchema(PlanInputSchema),
+      taskId,
+      agentId: req.planner.name,
+      kind: 'produce',
+      gateway,
+      emit: (e) => {
+        if (e.t === 'usage') {
+          spend = {
+            tokensIn: spend.tokensIn + e.tokensIn,
+            tokensOut: spend.tokensOut + e.tokensOut,
+            usd: e.usd,
+          };
+        }
+        emit({ kind: 'agent', actor: req.planner.name, event: e });
+      },
+    });
+    spend = { ...spend, usd: result.usd };
+
+    if (submitted === undefined && result.output !== undefined) {
+      try {
+        submitted = acceptPlan({
+          ...(result.output as Record<string, unknown>),
+          author: {
+            agent: req.planner.name,
+            vendor: req.planner.runtime.vendor,
+            model: modelOf(req.planner.role),
+          },
+          cost: spend,
+        });
+      } catch (err) {
+        emit({ kind: 'note', text: `the revision was rejected: ${(err as Error).message}` });
+      }
+    }
+    if (result.error !== undefined && submitted === undefined) {
+      emit({ kind: 'note', text: `${req.planner.name} stopped: ${result.error}` });
+    }
+  } finally {
+    await wt.destroy();
+  }
+
+  await finishTask(req.pool, taskId, submitted === undefined ? 'failed' : 'succeeded');
+
+  if (submitted === undefined) {
+    return {
+      ok: false,
+      reason: 'the planner finished without submitting a revision',
+      spend,
+    };
+  }
+
+  // The identity and cost the submission carries belong to the plan row, which
+  // already has them; what the caller needs back is the body.
+  const { understanding, approach, files, outOfScope, criteria, openQuestions } = submitted;
+  return {
+    ok: true,
+    revised: { understanding, approach, files, outOfScope, criteria, openQuestions },
+    spend,
+  };
+}
+
+/**
+ * What the planner is told when it revises.
+ *
+ * The answers are stated as decisions rather than input, because a model shown
+ * its own plan beside a contradicting answer will otherwise try to honour both.
+ */
+function reviseBrief(plan: StoredPlan, answers: readonly string[]): string {
+  const lines: string[] = [
+    'You are revising a plan you already wrote. Do not start a new one.',
+    '',
+    'The approver has answered your open questions. Their answers are decisions,',
+    'not suggestions: wherever an answer contradicts what you planned, the answer',
+    'wins and your earlier choice goes.',
+    '',
+    'Re-submit the whole plan with those decisions carried through everywhere they',
+    'reach — above all into the acceptance criteria, which are the only thing the',
+    'reviewer is shown. A criterion that still names a choice the approver',
+    'overruled will fail the builder for doing exactly what it was told.',
+    '',
+    'Leave everything the answers do not touch as it stands, so the change is',
+    'readable. Re-read the repository where an answer sends you somewhere you have',
+    'not looked. Do not ask the same question again: raise a new one only if an',
+    'answer cannot be acted on at all, and otherwise decide it and say so in what',
+    'you put out of scope.',
+    '',
+    'THE ORIGINAL REQUEST',
+    indent(plan.request),
+    '',
+    'WHAT YOU UNDERSTOOD IT TO BE',
+    indent(plan.understanding),
+    '',
+    'HOW YOU PLANNED TO DO IT',
+    indent(plan.approach),
+    '',
+    'THE FILES YOU NAMED',
+    ...plan.files.map((f) => `  ${f.path} — ${f.reason}`),
+  ];
+
+  if (plan.outOfScope.length > 0) {
+    lines.push('', 'WHAT YOU PUT OUT OF SCOPE', ...plan.outOfScope.map((o) => `  - ${o}`));
+  }
+
+  lines.push(
+    '',
+    'YOUR ACCEPTANCE CRITERIA, AS THEY STAND',
+    ...plan.criteria.map((c, i) => `  [${i}] ${c}`),
+    '',
+    'YOUR QUESTIONS, AND THE ANSWERS YOU ARE BEING GIVEN',
+  );
+
+  plan.openQuestions.forEach((q, i) => {
+    const a = (answers[i] ?? '').trim();
+    lines.push(
+      `  (${i}) ${q}`,
+      a === ''
+        ? '       ANSWER: none given — decide it yourself and record the decision'
+        : `       ANSWER: ${a}`,
+    );
+  });
+
+  return lines.join('\n');
+}
+
+/**
+ * What the revision changed, for the approver to read before it becomes the
+ * contract.
+ *
+ * Criteria are shown in full because they are what is being agreed to.
+ * Understanding and approach are only reported as rewritten: they are prose
+ * long enough that a line-level diff would bury the criteria underneath it.
+ */
+export function renderRevision(before: StoredPlan, after: PlanInput): string {
+  const lines: string[] = [
+    'WHAT YOUR ANSWERS CHANGED',
+    '  The criteria below are what the reviewer will judge against. Read them, not',
+    '  the answers you gave — these are what the answers turned into.',
+    '',
+  ];
+
+  const gone = before.criteria.filter((c) => !after.criteria.includes(c));
+  const added = after.criteria.filter((c) => !before.criteria.includes(c));
+  const kept = before.criteria.length - gone.length;
+
+  lines.push(
+    `ACCEPTANCE CRITERIA  ${before.criteria.length} -> ${after.criteria.length}` +
+      ` (${kept} unchanged, ${gone.length} dropped, ${added.length} new)`,
+  );
+  if (gone.length === 0 && added.length === 0) {
+    lines.push(
+      '  unchanged — the answers did not reach the criteria. If you expected them to,',
+      '  the revision disagreed with you: read the approach below before approving.',
+    );
+  }
+  for (const c of gone) lines.push(`  - ${c}`);
+  for (const c of added) lines.push(`  + ${c}`);
+
+  const beforePaths = before.files.map((f) => f.path);
+  const afterPaths = after.files.map((f) => f.path);
+  const droppedFiles = beforePaths.filter((f) => !afterPaths.includes(f));
+  const newFiles = after.files.filter((f) => !beforePaths.includes(f.path));
+  if (droppedFiles.length > 0 || newFiles.length > 0) {
+    lines.push('', `FILES  ${beforePaths.length} -> ${afterPaths.length}`);
+    for (const f of droppedFiles) lines.push(`  - ${f}`);
+    for (const f of newFiles) lines.push(`  + ${f.path}\n        ${f.reason}`);
+  }
+
+  const droppedScope = before.outOfScope.filter((o) => !after.outOfScope.includes(o));
+  const newScope = after.outOfScope.filter((o) => !before.outOfScope.includes(o));
+  if (droppedScope.length > 0 || newScope.length > 0) {
+    lines.push('', 'OUT OF SCOPE');
+    for (const o of droppedScope) lines.push(`  - ${o}`);
+    for (const o of newScope) lines.push(`  + ${o}`);
+  }
+
+  const rewritten = [
+    before.understanding === after.understanding ? undefined : 'understanding',
+    before.approach === after.approach ? undefined : 'approach',
+  ].filter((x): x is string => x !== undefined);
+  if (rewritten.length > 0) {
+    lines.push('', `REWRITTEN  ${rewritten.join(' and ')} — read with: shura plans ${before.id.slice(0, 8)}`);
+  }
+
+  if (after.openQuestions.length > 0) {
+    lines.push(
+      '',
+      'STILL OPEN',
+      '  The revision raised these rather than deciding them. They are recorded with',
+      '  the plan and the builder will decide them.',
+      ...after.openQuestions.map((q, i) => `  (${i}) ${q}`),
+    );
+  }
+
+  return lines.join('\n');
 }
 
 /** Everything a human needs to read before approving, as plain text. */
