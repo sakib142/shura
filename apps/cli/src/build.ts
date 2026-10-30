@@ -21,7 +21,7 @@ import { createPool, databaseUrl, isReachable, PgPlans, type StoredPlan } from '
 
 /** The pool, without the CLI taking a direct dependency on the driver. */
 type Pool = ReturnType<typeof createPool>;
-import { GitHubVcs, JiraTracker, githubDefaultBranch } from '@shura/connectors';
+import { CheckoutVcs, GitHubVcs, JiraTracker, githubDefaultBranch } from '@shura/connectors';
 import { loadConfig, type ForgeConfig, type LoadedConfig } from '@shura/config';
 import { loadAllRoles, withPrompt } from '@shura/roles';
 import type { RoleDefinition } from '@shura/core';
@@ -47,7 +47,10 @@ const USAGE = [
   '--resume carries out a plan you have already approved.',
   '',
   'options:',
-  '  --repo owner/name    the repository to work on (overrides the config)',
+  '  --repo owner/name    the repository to work on (clones it; needs a token)',
+  '  --here               work in the checkout you are standing in: no token,',
+  '                       no clone, and your working tree is never touched',
+  '  --path DIR           the same, for a checkout somewhere else',
   '  --task "..."         free-form instructions: a feature, or a bug to fix',
   '  --jira KEY           read the request from a ticket instead',
   '  --resume ID          build an approved plan; "latest" takes the oldest waiting one',
@@ -104,6 +107,20 @@ export function parseRepoSpec(
   return { owner: m[1]!, name: m[2]! };
 }
 
+/**
+ * The checkout to work in, when the caller named one.
+ *
+ * Opt-in rather than inferred from the current directory. Inferring would mean
+ * that running `shura build` inside Shura's own repository pointed agents at
+ * Shura, which is both surprising and the kind of surprise that only shows up
+ * once a branch exists.
+ */
+function checkoutDir(args: string[]): string | undefined {
+  const named = flag(args, 'path');
+  if (named !== undefined && named !== '') return named;
+  return args.includes('--here') ? process.cwd() : undefined;
+}
+
 interface Resolved {
   readonly owner: string;
   readonly name: string;
@@ -120,13 +137,22 @@ interface Resolved {
  * back to the configured one only because requiring --checks every time would
  * be tiresome for the common case of working on the same repo repeatedly.
  */
+/**
+ * How to build and test it: the flag if given, the config otherwise.
+ *
+ * Shared by both modes, because a repository's check command is a fact about
+ * the repository and not about how Shura reached it. Phase 3 of the plan
+ * replaces the configured fallback with something discovered, at which point
+ * needing the flag becomes a bug report rather than a prerequisite.
+ */
+function checksFrom(args: string[], config: ForgeConfig): readonly string[] {
+  const named = flag(args, 'checks');
+  return named !== undefined ? ['sh', '-c', named] : config.repo.checks;
+}
+
 function resolveRepo(args: string[], config: ForgeConfig): Resolved | string {
   const spec = flag(args, 'repo');
-  const checksFlag = flag(args, 'checks');
-  const checks =
-    checksFlag !== undefined
-      ? ['sh', '-c', checksFlag]
-      : config.repo.checks;
+  const checks = checksFrom(args, config);
 
   if (spec !== undefined) {
     const parsed = parseRepoSpec(spec);
@@ -295,27 +321,58 @@ async function planPhase(p: PlanArgs): Promise<number> {
   const { args, loaded, agents, pool } = p;
   const config = loaded.config;
 
-  let repo = resolveRepo(args, config);
-  if (typeof repo === 'string') {
-    console.error(repo);
-    return 2;
-  }
+  const here = checkoutDir(args);
+  const checkout =
+    here === undefined
+      ? undefined
+      : new CheckoutVcs({
+          dir: here,
+          ...(flag(args, 'base') === undefined ? {} : { base: flag(args, 'base')! }),
+          checkCommand: checksFrom(args, config),
+          onNote: (t) => console.log(`note: ${t}`),
+        });
 
-  const token = process.env[repo.tokenEnv] ?? '';
-  if (token === '') {
-    console.error(`${repo.tokenEnv} is not set, so ${repo.owner}/${repo.name} cannot be read.`);
-    return 2;
-  }
+  let repo: Resolved;
+  let slug: string;
 
-  // Ask the repository what it branches from, unless told. Assuming "main" is
-  // how a repo that defaults to "master" fails with a 404 on its own base ref.
-  if (flag(args, 'base') === undefined) {
-    const actual = await githubDefaultBranch({ owner: repo.owner, repo: repo.name, token });
-    if (actual !== undefined && actual !== repo.base) {
-      console.log(`${repo.owner}/${repo.name} defaults to "${actual}", not "${repo.base}" — using it`);
-      repo = { ...repo, base: actual };
+  if (checkout !== undefined) {
+    // No token, no clone, no configured repository: the checkout already has a
+    // remote and credentials that work, which is the whole point of this mode.
+    try {
+      slug = await checkout.slug();
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 2;
+    }
+    const base = flag(args, 'base') ?? (await checkout.remoteDefaultBranch()) ?? 'main';
+    const [owner = slug, name = slug] = slug.split('/');
+    repo = { owner, name, base, checks: checksFrom(args, config), tokenEnv: 'unused' };
+  } else {
+    const resolved = resolveRepo(args, config);
+    if (typeof resolved === 'string') {
+      console.error(resolved);
+      return 2;
+    }
+    repo = resolved;
+    slug = `${repo.owner}/${repo.name}`;
+
+    const token = process.env[repo.tokenEnv] ?? '';
+    if (token === '') {
+      console.error(`${repo.tokenEnv} is not set, so ${slug} cannot be read.`);
+      return 2;
+    }
+
+    // Ask the repository what it branches from, unless told. Assuming "main" is
+    // how a repo that defaults to "master" fails with a 404 on its own base ref.
+    if (flag(args, 'base') === undefined) {
+      const actual = await githubDefaultBranch({ owner: repo.owner, repo: repo.name, token });
+      if (actual !== undefined && actual !== repo.base) {
+        console.log(`${slug} defaults to "${actual}", not "${repo.base}" — using it`);
+        repo = { ...repo, base: actual };
+      }
     }
   }
+  const token = process.env[repo.tokenEnv] ?? '';
 
   // The request, either as the human wrote it or as the ticket has it.
   let key: string;
@@ -391,28 +448,41 @@ async function planPhase(p: PlanArgs): Promise<number> {
   );
   const workItemId = rows[0]!.id;
 
-  const vcs = new GitHubVcs({
-    owner: repo.owner,
-    repo: repo.name,
-    token,
-    base: repo.base,
-    checkCommand: repo.checks,
-    workDir: join(loaded.dir, '.shura'),
-  });
-  // Planning itself never writes, so a read-only token is legitimate here. But
-  // finding out now beats finding out after an approved plan has been built and
-  // the push fails — so it reports rather than refuses.
-  const writable = await probeWrite(vcs);
-  if (writable !== undefined) {
-    console.log(
-      `\nnote: ${writable}\n` +
-        'Planning does not need write access, so this run can continue. Building will.\n',
-    );
-  }
+  // Planning itself never writes, so being unable to push is legitimate here.
+  // But finding out now beats finding out after an approved plan has been built
+  // and the push fails — so both modes report rather than refuse.
+  let repoDir: string;
+  if (checkout !== undefined) {
+    console.log(`working in ${await checkout.workingRoot()}  (${slug}, base ${repo.base})`);
+    repoDir = await checkout.repoDir();
+    const blocked = await checkout.canPush();
+    if (blocked !== undefined) {
+      console.log(
+        `\nnote: ${blocked}\n` +
+          'Planning does not need write access, so this run can continue. Building will.\n',
+      );
+    }
+  } else {
+    const vcs = new GitHubVcs({
+      owner: repo.owner,
+      repo: repo.name,
+      token,
+      base: repo.base,
+      checkCommand: repo.checks,
+      workDir: join(loaded.dir, '.shura'),
+    });
+    const writable = await probeWrite(vcs);
+    if (writable !== undefined) {
+      console.log(
+        `\nnote: ${writable}\n` +
+          'Planning does not need write access, so this run can continue. Building will.\n',
+      );
+    }
 
-  console.log(`cloning ${repo.owner}/${repo.name}`);
-  const repoDir = await vcs.repoDir();
-  await vcs.refresh();
+    console.log(`cloning ${slug}`);
+    repoDir = await vcs.repoDir();
+    await vcs.refresh();
+  }
 
   const outcome = await planWorkItem({
     pool,
@@ -423,7 +493,7 @@ async function planPhase(p: PlanArgs): Promise<number> {
     // The target is recorded with the plan, not left to be re-derived at build
     // time from a config that names whichever repo it happens to name.
     source: {
-      repo: `${repo.owner}/${repo.name}`,
+      repo: slug,
       request,
       source,
       base: repo.base,
@@ -538,17 +608,6 @@ async function buildPhase(b: BuildArgs): Promise<number> {
     return 1;
   }
 
-  const [owner, name] = plan.repo.split('/');
-  if (owner === undefined || name === undefined) {
-    console.error(`plan ${plan.id.slice(0, 8)} records its repo as "${plan.repo}", which is not owner/name.`);
-    return 1;
-  }
-  const tokenEnv = config.repo.type === 'github' ? config.repo.tokenEnv : 'GITHUB_TOKEN';
-  const token = process.env[tokenEnv] ?? '';
-  if (token === '') {
-    console.error(`${tokenEnv} is not set, so nothing can be pushed to ${plan.repo}.`);
-    return 2;
-  }
   // From the plan, not from config. The config's base branch and check command
   // belong to whichever repository it names; using them to build a different
   // one either branches from the wrong ref or verifies nothing, and says
@@ -562,6 +621,51 @@ async function buildPhase(b: BuildArgs): Promise<number> {
         ? [...plan.checks]
         : config.repo.checks;
   const base = flag(args, 'base') ?? plan.base;
+
+  /*
+   * Which mode built this plan.
+   *
+   * Named explicitly when --path or --here is given. Otherwise inferred: if the
+   * directory this is being run from is a checkout of the repository the plan
+   * names, use it. Without that inference, planning with --here and resuming
+   * without it would demand a token for a repository the developer can already
+   * push to — a trap that only appears between two commands that look like a
+   * pair.
+   */
+  const named = checkoutDir(args);
+  let checkout: CheckoutVcs | undefined;
+  if (named !== undefined) {
+    checkout = new CheckoutVcs({
+      dir: named,
+      base,
+      checkCommand: checks,
+      onNote: (t) => console.log(`note: ${t}`),
+    });
+  } else {
+    const candidate = new CheckoutVcs({
+      dir: process.cwd(),
+      base,
+      checkCommand: checks,
+      onNote: (t) => console.log(`note: ${t}`),
+    });
+    const slug = await candidate.slug().catch(() => undefined);
+    if (slug === plan.repo) {
+      checkout = candidate;
+      console.log(`working in this checkout of ${plan.repo} rather than cloning it`);
+    }
+  }
+
+  const [owner, name] = plan.repo.split('/');
+  if (checkout === undefined && (owner === undefined || name === undefined)) {
+    console.error(`plan ${plan.id.slice(0, 8)} records its repo as "${plan.repo}", which is not owner/name.`);
+    return 1;
+  }
+  const tokenEnv = config.repo.type === 'github' ? config.repo.tokenEnv : 'GITHUB_TOKEN';
+  const token = process.env[tokenEnv] ?? '';
+  if (checkout === undefined && token === '') {
+    console.error(`${tokenEnv} is not set, so nothing can be pushed to ${plan.repo}.`);
+    return 2;
+  }
 
   if (plan.checks.length === 0 && checksFlag === undefined) {
     // Only reachable for a plan recorded before the plan carried its target.
@@ -606,25 +710,35 @@ async function buildPhase(b: BuildArgs): Promise<number> {
     return 1;
   }
 
-  const vcs = new GitHubVcs({
-    owner,
-    repo: name,
-    token,
-    base,
-    checkCommand: checks,
-    workDir: join(loaded.dir, '.shura'),
-  });
-  // Before the builder runs, not after. A read-only token otherwise passes every
-  // check and fails at the push, by which point the whole budget is spent.
-  const blocked = await probeWrite(vcs);
+  const vcs =
+    checkout ??
+    new GitHubVcs({
+      owner: owner!,
+      repo: name!,
+      token,
+      base,
+      checkCommand: checks,
+      workDir: join(loaded.dir, '.shura'),
+    });
+
+  // Before the builder runs, not after. A credential that cannot write
+  // otherwise passes every check and fails at the push, by which point the
+  // whole budget is spent.
+  const blocked =
+    checkout === undefined ? await probeWrite(vcs as GitHubVcs) : await checkout.canPush();
   if (blocked !== undefined) {
     console.error(`\ncannot build: ${blocked}`);
     return 1;
   }
 
-  console.log(`cloning ${plan.repo}`);
-  const repoDir = await vcs.repoDir();
-  await vcs.refresh();
+  let repoDir: string;
+  if (checkout === undefined) {
+    console.log(`cloning ${plan.repo}`);
+    repoDir = await (vcs as GitHubVcs).repoDir();
+    await (vcs as GitHubVcs).refresh();
+  } else {
+    repoDir = await checkout.repoDir();
+  }
 
   const outcome = await buildApprovedPlan({
     pool,

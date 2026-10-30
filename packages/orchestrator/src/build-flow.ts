@@ -66,7 +66,14 @@ import { recorder, type StreamEvent } from './stream.js';
 /** What GitHub can do beyond the port, when the run is on GitHub. */
 export interface PullRequestSurface {
   postVerdict?(ref: ChangeRequestRef, body: string, approved: boolean): Promise<void>;
-  urlOf?(ref: ChangeRequestRef): Promise<string>;
+  /**
+   * Where the change request can be read, when the host can say.
+   *
+   * Optional in both senses: a host may not offer one, and an adapter that does
+   * may still fail to read it. The caller already treats absence as "no link to
+   * print", so the type says so rather than making every adapter pretend.
+   */
+  urlOf?(ref: ChangeRequestRef): Promise<string | undefined>;
 }
 
 export interface BuildRequest {

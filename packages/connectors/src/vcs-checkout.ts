@@ -175,6 +175,84 @@ export class CheckoutVcs implements Vcs {
   }
 
   /**
+   * How this repository should be named in a plan.
+   *
+   * `owner/name` from the remote where that can be read, so a plan recorded
+   * from a checkout is recognisable as the same project as one recorded from a
+   * clone — and so a resume can tell whether the checkout it is standing in is
+   * the one the plan was made against. The directory name is the fallback: a
+   * repository with no remote can still be planned against, it just cannot be
+   * pushed.
+   */
+  async slug(): Promise<string> {
+    const r = await new Git(await this.repoDir()).tryRun('remote', 'get-url', this.remote);
+    const fromRemote = r.ok ? slugFromRemote(r.stdout.trim()) : undefined;
+    if (fromRemote !== undefined) return fromRemote;
+    const root = await this.workingRoot();
+    return root.split('/').filter((p) => p !== '').pop() ?? root;
+  }
+
+  /**
+   * What the remote actually defaults to.
+   *
+   * Assuming "main" is how a repository that defaults to "master" fails on its
+   * own base ref — the clone path asks GitHub the same question for the same
+   * reason. Here it is a local ref, so the answer costs nothing: `origin/HEAD`
+   * is what `git clone` recorded. Undefined when the ref is absent, which is
+   * common in a repository created locally rather than cloned.
+   */
+  async remoteDefaultBranch(): Promise<string | undefined> {
+    const r = await new Git(await this.repoDir()).tryRun(
+      'symbolic-ref',
+      '--short',
+      `refs/remotes/${this.remote}/HEAD`,
+    );
+    if (!r.ok) return undefined;
+    const name = r.stdout.trim().replace(new RegExp(`^${this.remote}/`), '');
+    return name === '' ? undefined : name;
+  }
+
+  /**
+   * Whether a push would be allowed, without pushing anything.
+   *
+   * `--dry-run` still connects and still negotiates, so a credential that
+   * cannot write says so here rather than after a build has been paid for —
+   * which is the whole point. The clone path learned this the hard way: a
+   * read-only token passed every check and failed at the push with the budget
+   * already spent.
+   *
+   * Returns the reason when a push would fail, and undefined when it would not.
+   */
+  async canPush(): Promise<string | undefined> {
+    const dir = await this.repoDir();
+    const git = new Git(dir);
+
+    const head = await git.tryRun('rev-parse', '--verify', `refs/remotes/${this.remote}/${this.base}`);
+    const sha = head.ok
+      ? head.stdout.trim()
+      : (await git.tryRun('rev-parse', 'HEAD')).stdout.trim();
+    if (sha === '') return `could not resolve anything to probe a push with`;
+
+    const probe = await git.tryRun(
+      'push',
+      '--dry-run',
+      this.remote,
+      `${sha}:refs/heads/shura-write-probe`,
+    );
+    if (probe.ok) return undefined;
+
+    const first = redactSecrets(probe.stderr)
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l !== '' && !l.startsWith('To '))
+      .shift();
+    return (
+      `${this.remote} refused a push: ${first ?? 'no reason given'}. ` +
+      'A checkout that cannot push cannot open a pull request either.'
+    );
+  }
+
+  /**
    * Pushes through the developer's own credential helper.
    *
    * Refuses the base branch outright. Shura has no merge() and this is the one
@@ -358,6 +436,33 @@ export function ghCli(bin = 'gh'): HostCli {
       return asJson(r.stdout)?.url;
     },
   };
+}
+
+/**
+ * `owner/name` out of a remote URL, for any of the ways one can be written.
+ *
+ * Deliberately not host-aware: it is an identity for a plan row, not a routing
+ * decision. Which host this is remains the adapter's business.
+ */
+export function slugFromRemote(url: string): string | undefined {
+  const cleaned = url.trim().replace(/\.git$/, '');
+
+  // A remote can be a path on disk — a sibling clone, or a bare repository in
+  // a temp directory. Those have no owner, and inventing one from the last two
+  // path segments would put "T/shura-origin-x1y2" in a plan row.
+  // `file://` is a scheme for a local path, so it is excluded with the bare
+  // paths rather than counted as a host.
+  const hosted =
+    /^(?!file:)[a-z][a-z0-9+.-]*:\/\//i.test(cleaned) || /^[^/\s]+@[^/\s]+:/.test(cleaned);
+  if (!hosted) return undefined;
+
+  // scp-style (git@host:owner/name) and URL-style (https://host/owner/name)
+  const m = /(?:[:/])([^/:]+)\/([^/]+)$/.exec(cleaned);
+  if (m === null) return undefined;
+  const [, owner, name] = m;
+  return owner === undefined || name === undefined || owner === '' || name === ''
+    ? undefined
+    : `${owner}/${name}`;
 }
 
 function asJson(text: string): { number?: number; url?: string } | undefined {

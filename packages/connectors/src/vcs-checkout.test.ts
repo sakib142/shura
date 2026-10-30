@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { Git, agentIdentity } from '@shura/git';
-import { CheckoutError, CheckoutVcs, type HostCli } from './vcs-checkout.js';
+import { CheckoutError, CheckoutVcs, slugFromRemote, type HostCli } from './vcs-checkout.js';
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -60,14 +60,7 @@ async function snapshot(dir: string): Promise<Record<string, string>> {
   };
 }
 
-/*
- * A generous timeout, because each test here builds two real repositories and
- * every assertion is a git invocation. Alone the file runs in five seconds;
- * inside the full suite — Postgres up, worktrees being made and destroyed —
- * the same git calls take about six times as long and cross vitest's five
- * second default. Slow is fine, intermittently red is not.
- */
-describe('the checkout VCS', { timeout: 60_000 }, () => {
+describe('the checkout VCS', () => {
   it('finds the repository from a path inside it', async () => {
     const { dir } = await aCheckout();
     expect(await vcsFor(dir).repoDir()).toContain('.git');
@@ -252,3 +245,39 @@ describe('the checkout VCS', { timeout: 60_000 }, () => {
     await expect(vcsFor(outside).repoDir()).rejects.toThrow(CheckoutError);
   });
 });
+
+/*
+ * Naming the repository a plan was made against.
+ *
+ * This is an identity for a plan row, not a routing decision — which host it
+ * is remains the adapter's business. It matters because a resume has to be able
+ * to tell whether the checkout it is standing in is the one the plan was made
+ * against.
+ */
+describe('naming a repository from its remote', () => {
+  it('reads the usual ways a remote is written', () => {
+    expect(slugFromRemote('https://github.com/owner/name.git')).toBe('owner/name');
+    expect(slugFromRemote('https://github.com/owner/name')).toBe('owner/name');
+    expect(slugFromRemote('git@github.com:owner/name.git')).toBe('owner/name');
+    expect(slugFromRemote('ssh://git@github.com:2222/owner/name.git')).toBe('owner/name');
+    expect(slugFromRemote('  https://gitlab.com/owner/name.git  ')).toBe('owner/name');
+  });
+
+  /*
+   * A remote can be a path on disk — a sibling clone, or the bare repository
+   * these very tests use as an origin. Those have no owner, and the last two
+   * path segments are not one: "T/shura-origin-x1y2" in a plan row is worse
+   * than no slug at all, because the caller falls back to the directory name.
+   */
+  it('declines to invent an owner for a path on disk', () => {
+    expect(slugFromRemote('/tmp/shura-origin-abc')).toBeUndefined();
+    expect(slugFromRemote('../sibling-clone')).toBeUndefined();
+    expect(slugFromRemote('file:///tmp/whatever')).toBe(undefined);
+  });
+
+  it('declines what it cannot read rather than guessing', () => {
+    expect(slugFromRemote('')).toBeUndefined();
+    expect(slugFromRemote('https://github.com/')).toBeUndefined();
+  });
+});
+
