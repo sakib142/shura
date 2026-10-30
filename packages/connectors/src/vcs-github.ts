@@ -207,16 +207,31 @@ export class GitHubVcs implements Vcs {
     base: string;
     title: string;
     body: string;
+    draft?: boolean;
   }): Promise<ChangeRequestRef> {
-    const res = await this.#call('/pulls', {
-      method: 'POST',
-      body: JSON.stringify({
-        title: input.title,
-        head: input.branch,
-        base: input.base,
-        body: input.body,
-      }),
-    });
+    const create = async (draft: boolean): Promise<Response> =>
+      this.#call('/pulls', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: input.title,
+          head: input.branch,
+          base: input.base,
+          body: input.body,
+          ...(draft ? { draft: true } : {}),
+        }),
+      });
+
+    let res = await create(input.draft === true);
+    let failure = res.ok ? '' : await res.text();
+
+    // A draft is a nicety, not a requirement. Private repositories on the free
+    // plan refuse `draft: true` with a 422, and the caller asked for a draft
+    // because a human needs to look at this — which is served far better by an
+    // ordinary pull request than by none.
+    if (!res.ok && res.status === 422 && input.draft === true && /draft/i.test(failure)) {
+      res = await create(false);
+      failure = res.ok ? '' : await res.text();
+    }
 
     if (res.status === 422) {
       // Already open for this branch: reuse it rather than failing a rework.
@@ -231,7 +246,7 @@ export class GitHubVcs implements Vcs {
     if (!res.ok) {
       throw new GitHubError(
         res.status,
-        (await res.text()).slice(0, 300),
+        failure.slice(0, 300),
         'A pull request needs commits on the branch that are not on the base. ' +
           'If the branch was never pushed, there is nothing to open one for.',
       );

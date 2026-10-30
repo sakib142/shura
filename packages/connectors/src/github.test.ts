@@ -101,6 +101,76 @@ describe('pull requests', () => {
       new GitHubVcs({ ...base, fetch }).openChangeRequest({ branch: 'b', base: 'main', title: 't', body: '' }),
     ).rejects.toThrow(GitHubError);
   });
+
+  it('asks for a draft when the caller wants one', async () => {
+    const { fetch, calls } = fakeGitHub({
+      'POST /pulls': { status: 201, body: { number: 42, html_url: 'u' } },
+    });
+    await new GitHubVcs({ ...base, fetch }).openChangeRequest({
+      branch: 'feature/X-1', base: 'main', title: 't', body: 'b', draft: true,
+    });
+    expect(calls.find((c) => c.method === 'POST')?.body).toMatchObject({ draft: true });
+  });
+
+  it('does not send draft at all when none was asked for', async () => {
+    const { fetch, calls } = fakeGitHub({
+      'POST /pulls': { status: 201, body: { number: 42, html_url: 'u' } },
+    });
+    await new GitHubVcs({ ...base, fetch }).openChangeRequest({
+      branch: 'feature/X-1', base: 'main', title: 't', body: 'b',
+    });
+    expect(calls.find((c) => c.method === 'POST')?.body).not.toHaveProperty('draft');
+  });
+
+  /*
+   * Draft pull requests are not available on every plan — a private repository
+   * on the free plan refuses `draft: true` with a 422. The caller asked for a
+   * draft because a person has to take the work over, and that is served far
+   * better by an ordinary pull request than by none at all, so the draft is
+   * dropped and the pull request still opens.
+   */
+  it('falls back to an ordinary pull request where drafts are unavailable', async () => {
+    const posted: unknown[] = [];
+    const f = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      if (init?.method === 'POST' && path.endsWith('/pulls')) {
+        const body = JSON.parse(String(init.body)) as { draft?: boolean };
+        posted.push(body);
+        return body.draft === true
+          ? new Response('{"message":"Draft pull requests are not supported in this repository."}', {
+              status: 422,
+            })
+          : new Response(JSON.stringify({ number: 9, html_url: 'u' }), { status: 201 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const ref = await new GitHubVcs({
+      ...base,
+      fetch: f as unknown as typeof fetch,
+    }).openChangeRequest({ branch: 'feature/X-1', base: 'main', title: 't', body: 'b', draft: true });
+
+    expect(ref.id).toBe('9');
+    expect(posted).toHaveLength(2);
+    expect(posted[0]).toMatchObject({ draft: true });
+    expect(posted[1]).not.toHaveProperty('draft');
+  });
+
+  /*
+   * A 422 that is not about drafts still means "one is already open for this
+   * branch", which is the rework case. Retrying it without the draft flag
+   * would open nothing and lose the existing pull request.
+   */
+  it('still reuses an existing pull request when a draft was asked for', async () => {
+    const { fetch } = fakeGitHub({
+      'POST /pulls': { status: 422, body: { message: 'A pull request already exists.' } },
+      '/pulls?head=me:feature%2FX-1&state=open': { body: [{ number: 7, html_url: 'u' }] },
+    });
+    const ref = await new GitHubVcs({ ...base, fetch }).openChangeRequest({
+      branch: 'feature/X-1', base: 'main', title: 't', body: 'b', draft: true,
+    });
+    expect(ref.id).toBe('7');
+  });
 });
 
 describe('diffs', () => {

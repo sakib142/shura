@@ -315,27 +315,43 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
 
       const dirty = await wt.git.tryRun('status', '--porcelain');
       if (dirty.stdout.trim() === '') {
-        await finishTask(req.pool, buildTaskId, 'failed');
-        emit({ kind: 'note', text: 'the builder changed nothing' });
-        state = transition(state, 'human_requested');
-        return {
-          state,
-          attempts: attempt,
-          branch,
-          reviewerFixed,
-          reason: 'the builder changed nothing',
-          usd,
-        };
-      }
-      const discarded = await stageWork(wt);
-      if (discarded.length > 0) {
+        const onBranch = whatAnEmptyWorktreeMeans(
+          await wt.git.tryRun('rev-list', '--count', `${base}..HEAD`),
+        );
+
+        if (onBranch.send === 'human') {
+          await finishTask(req.pool, buildTaskId, 'failed');
+          emit({ kind: 'note', text: 'the builder changed nothing, and the branch is empty' });
+          state = transition(state, 'human_requested');
+          return {
+            state,
+            attempts: attempt,
+            branch,
+            reviewerFixed,
+            reason: 'the builder changed nothing',
+            usd,
+          };
+        }
+
+        await finishTask(req.pool, buildTaskId, 'succeeded');
         emit({
           kind: 'note',
-          text: `left ${discarded.join(', ')} as it was — the checks rewrote it, the agent did not`,
+          text:
+            `${req.builder.name} wrote nothing this attempt, but ${branch} is ` +
+            `${onBranch.ahead} commit(s) ahead of ${base} and the checks pass — ` +
+            'reviewing what is on it',
         });
+      } else {
+        const discarded = await stageWork(wt);
+        if (discarded.length > 0) {
+          emit({
+            kind: 'note',
+            text: `left ${discarded.join(', ')} as it was — the checks rewrote it, the agent did not`,
+          });
+        }
+        await wt.git.run('commit', '-q', '-m', commitMessage(plan, attempt));
+        await finishTask(req.pool, buildTaskId, 'succeeded');
       }
-      await wt.git.run('commit', '-q', '-m', commitMessage(plan, attempt));
-      await finishTask(req.pool, buildTaskId, 'succeeded');
     } finally {
       clearInterval(beat);
       await wt.destroy();
@@ -455,9 +471,26 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
     state = next.next;
 
     if (v.decision === 'BLOCKED') {
+      // A draft pull request, not a bare branch. The work needs a person, and a
+      // person needs somewhere to read the diff beside the reason it stopped —
+      // which a branch name in a terminal that has already scrolled away is
+      // not. A draft cannot be merged until someone marks it ready, so nothing
+      // is admitted on an agent's word by opening one.
+      const parked = await openPullRequest({
+        req,
+        branch,
+        base,
+        plan,
+        verdict: v,
+        reviewer: chosen,
+        checks,
+        reviewerFixed,
+        draft: true,
+        emit,
+      });
       await note(
         `The reviewer could not reach a verdict: ${v.submission.blockedReason ?? 'no reason given'}\n` +
-          'A human is needed. The branch is pushed but no pull request was opened.',
+          'A human is needed. The branch is pushed and a draft pull request is open for it.',
       );
       await move('blocked');
       return {
@@ -467,6 +500,7 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
         reviewerFixed,
         decision: v.decision,
         reason: v.submission.blockedReason ?? 'blocked',
+        ...(parked === undefined ? {} : { changeRequest: parked }),
         usd,
       };
     }
@@ -556,9 +590,25 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
     }
 
     if (state === 'escalated') {
+      // Same reasoning as BLOCKED: give up on the loop, not on the human. The
+      // branch is green and pushed and carries real work that simply did not
+      // satisfy every criterion; a draft pull request puts that work, the
+      // verdict and the unmet criteria where someone can act on them.
+      const parked = await openPullRequest({
+        req,
+        branch,
+        base,
+        plan,
+        verdict: v,
+        reviewer: chosen,
+        checks,
+        reviewerFixed,
+        draft: true,
+        emit,
+      });
       await note(
         `Escalated: ${cap} attempt(s) without a passing verdict. A human is needed.\n` +
-          `The branch ${branch} is pushed; no pull request was opened.`,
+          `The branch ${branch} is pushed and a draft pull request is open for it.`,
       );
       await move('blocked');
       return {
@@ -568,6 +618,7 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
         reviewerFixed,
         decision: v.decision,
         reason: `loop cap reached at attempt ${attempt}`,
+        ...(parked === undefined ? {} : { changeRequest: parked }),
         usd,
       };
     }
@@ -764,6 +815,35 @@ export async function reviewBranch(
   };
 }
 
+/**
+ * An empty worktree, read correctly.
+ *
+ * A clean worktree means the builder wrote nothing *this attempt*. That is a
+ * failure only if the branch has nothing on it either. When the branch is
+ * already ahead of the base the work exists — put there by an earlier run of
+ * this plan, or by the attempt before this one — and a builder writing nothing
+ * is a builder agreeing there is nothing left to write.
+ *
+ * Collapsing those two cost a whole run. A re-run of a plan whose branch
+ * already carried the change was reported as "the builder changed nothing" and
+ * escalated to a human on attempt 1 — with a complete, green, pushed branch
+ * sitting there that no reviewer had ever looked at. Sending it on costs one
+ * review and settles it. Stopping costs a person, which is the thing this flow
+ * exists to avoid spending.
+ *
+ * A `rev-list` that failed is read as "nothing on the branch" rather than
+ * guessed at: publishing a branch we could not count is how an empty branch
+ * reaches a reviewer and wastes its pass.
+ */
+export function whatAnEmptyWorktreeMeans(
+  counted: { readonly ok: boolean; readonly stdout: string },
+): { readonly send: 'review'; readonly ahead: number } | { readonly send: 'human' } {
+  if (!counted.ok) return { send: 'human' };
+  const ahead = Number.parseInt(counted.stdout.trim(), 10);
+  if (!Number.isFinite(ahead) || ahead <= 0) return { send: 'human' };
+  return { send: 'review', ahead };
+}
+
 /* ----------------------------------------------------------------------- fix */
 
 interface FixArgs {
@@ -944,6 +1024,14 @@ interface OpenArgs {
   checks: { ok: boolean; summary: string; output: string };
   reviewerFixed: boolean;
   fixSummary?: string;
+  /**
+   * Open it as a draft, for work a person has to take over.
+   *
+   * Set when the loop stops without a passing verdict. The plan is recorded as
+   * parked rather than built, because the work did not reach the standard the
+   * plan set and a row claiming otherwise would hide every escalation.
+   */
+  draft?: boolean;
   /** The recording emit, so the pull request lands in the event log too. */
   emit: (e: StreamEvent) => void;
 }
@@ -956,10 +1044,11 @@ async function openPullRequest(
     const ref = await req.vcs.openChangeRequest({
       branch: a.branch,
       base: a.base,
-      title: `${a.plan.workItemKey}: ${a.plan.title}`,
+      title: `${a.draft === true ? '[needs a human] ' : ''}${a.plan.workItemKey}: ${a.plan.title}`,
       body: pullRequestBody(a),
       author: req.builder.name,
       workItemId: a.plan.workItemId,
+      ...(a.draft === true ? { draft: true } : {}),
     });
 
     // The verdict goes on the pull request too, as a comment and never as an
@@ -970,18 +1059,27 @@ async function openPullRequest(
     }
     const url = req.vcs.urlOf === undefined ? undefined : await req.vcs.urlOf(ref);
 
-    await new PgPlans(req.pool).built(a.plan.id, a.branch, ref.id).catch(() => {});
+    const plans = new PgPlans(req.pool);
+    await (a.draft === true
+      ? plans.parked(a.plan.id, a.branch, ref.id)
+      : plans.built(a.plan.id, a.branch, ref.id)
+    ).catch(() => {});
 
     a.emit({
       kind: 'note',
-      text: url === undefined ? `pull request ${ref.id} opened` : `pull request open: ${url}`,
+      text:
+        (a.draft === true ? 'pull request opened for a human to take over' : 'pull request open') +
+        (url === undefined ? ` — ${ref.id}` : `: ${url}`),
     });
 
     if (req.tracker !== undefined) {
       await req.tracker
         .comment(
           a.plan.workItemKey,
-          `A pull request is open for a human to review and merge${url === undefined ? '' : `:\n${url}`}\n\n` +
+          (a.draft === true
+            ? `The loop stopped without a passing verdict. A pull request is open so the work ` +
+              `and the findings are in one place for a person${url === undefined ? '' : `:\n${url}`}\n\n`
+            : `A pull request is open for a human to review and merge${url === undefined ? '' : `:\n${url}`}\n\n`) +
             `Verdict: ${a.verdict.decision} from ${a.reviewer.agentId} ` +
             `(${a.reviewer.vendor}/${a.reviewer.model})\n` +
             (a.reviewerFixed
