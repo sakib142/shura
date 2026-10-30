@@ -14,6 +14,8 @@ import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { digest, stableStringify } from '../hash.js';
 import { VerdictInputSchema } from './verdict.js';
+import { PlanInputSchema } from './plan.js';
+import { RepoPath } from './paths.js';
 import type { ToolEffect } from '../vocabulary.js';
 
 /** Context available when deriving an effect key. */
@@ -45,21 +47,8 @@ export interface ToolSpec {
   readonly reclaimable?: boolean;
 }
 
-/**
- * Repo paths. Anthropic's SWE-bench write-up found models made mistakes with
- * ambiguous file paths until the rule was made unambiguous; ours is
- * repo-relative with no escape, which doubles as a sandbox control and holds
- * unchanged when the worktree driver becomes a container.
- */
-export const RepoPath = z
-  .string()
-  .min(1)
-  .max(1024)
-  .regex(/^[A-Za-z0-9._\-/]+$/, 'may contain only letters, digits, dot, underscore, hyphen, slash')
-  .refine((p) => !p.startsWith('/'), { message: 'must be repo-relative, not absolute' })
-  .refine((p) => !p.split('/').includes('..'), { message: 'may not contain a ".." segment' })
-  .refine((p) => !p.includes('//'), { message: 'may not contain an empty path segment' })
-  .refine((p) => !p.startsWith('.git/'), { message: 'may not touch the git directory' });
+/* RepoPath lives in paths.ts, which the plan contract needs too; the barrel
+ * re-exports it from there, so it is imported here rather than re-exported. */
 
 const WorkItemKey = z.string().min(1).max(64).regex(/^[A-Z][A-Z0-9]*-\d+$/, 'expected a key like ORD-12');
 const BranchName = z.string().min(1).max(255).regex(/^[A-Za-z0-9._\-/]+$/);
@@ -70,6 +59,24 @@ export const TOOL_CATALOG = {
     description:
       'Read one file from the checked-out repository. Paths are repo-relative ("src/orders/list.ts"), never absolute and never containing ".." — a path that leaves the workspace is rejected. Use this to inspect code; use test.run to find out whether it works.',
     args: z.object({ path: RepoPath }),
+  },
+  'repo.search': {
+    effect: 'read',
+    description:
+      'Search the repository for a pattern and get back matching lines with their file and line ' +
+      'number. Use this FIRST, before reading anything: finding where something lives by opening ' +
+      'files one at a time is slow, and every file you open stays in front of you for the rest of ' +
+      'the task. One search usually replaces a dozen reads. ' +
+      'Good uses: "where is OrderList used", "what imports this hook", "which files mention ' +
+      'useAuth", "is there already a date picker". ' +
+      'The pattern is a regular expression unless you set literal to true. Narrow it with glob ' +
+      'when you know roughly where to look, for example "src/components/*". Only files tracked ' +
+      'by git are searched, so dependencies and build output are never in the way.',
+    args: z.object({
+      pattern: z.string().min(1).max(500),
+      glob: z.string().max(300).nullish(),
+      literal: z.boolean().nullish(),
+    }),
   },
   'repo.write': {
     effect: 'write',
@@ -160,6 +167,21 @@ export const TOOL_CATALOG = {
     effectKey: (_a: unknown, c) => `backlog.propose:${c.taskId}:${c.attempt}`,
     reclaimable: false,
   },
+  'plan.submit': {
+    effect: 'write',
+    description:
+      'Submit your plan for the task and stop. This does not change the repository: a human ' +
+      'reads the plan and approves it before any code is written, so this is where you say what ' +
+      'you intend to do while it is still cheap to be wrong. State what you understand the task ' +
+      'to be in your own words, name the files you expect to touch and why, and give the ' +
+      'acceptance criteria the work will be judged against — each one naming a condition, an ' +
+      'action and an outcome, in the form "Given \u2026, when \u2026, then \u2026". Record anything the ' +
+      'request does not settle as an open question rather than deciding it yourself; a plan with ' +
+      'open questions is not a failure, it is the point of planning. Call this once.',
+    args: PlanInputSchema,
+    effectKey: (_a: unknown, c) => `plan.submit:${c.taskId}:${c.attempt}`,
+    reclaimable: false,
+  },
   'verdict.submit': {
     effect: 'write',
     description:
@@ -206,11 +228,16 @@ export class ToolArgsInvalid extends Error {
  * null is lying to the model, and it cannot tell the difference between that
  * and a real mistake.
  *
- * So a null is read as absence before validation. None of our tool arguments
- * carry a meaningful null, which is what makes this safe to do centrally
- * rather than schema by schema.
+ * So a null is read as absence before validation. Nothing we accept from a
+ * model carries a meaningful null, which is what makes this safe to do
+ * centrally rather than schema by schema.
+ *
+ * It applies to structured output as well as tool arguments — the same
+ * convention, arriving by a different door. A reviewer's verdict came back
+ * with `finding: null` on every criterion and was rejected, which is this
+ * exact problem with the fix sitting one module away.
  */
-function nullsAsAbsent(value: unknown): unknown {
+export function nullsAsAbsent(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(nullsAsAbsent);
   if (typeof value !== 'object' || value === null) return value;
 
@@ -274,6 +301,21 @@ export { stableStringify };
  * but it is why every tool carries a description stating them in words. The
  * schema is a hint to the model; the gateway is the enforcement.
  */
+/**
+ * Any zod schema as JSON Schema, for a CLI's structured-output flag.
+ *
+ * The same translation `toolJsonSchema` does, without going through the tool
+ * catalog: a CLI-driven agent returns its plan or verdict as its final answer
+ * rather than by calling a tool, but it is held to the identical shape.
+ */
+export function asJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
+  const out = zodToJsonSchema(schema, {
+    target: 'jsonSchema7',
+    $refStrategy: 'none',
+  }) as Record<string, unknown>;
+  return { ...out, additionalProperties: false };
+}
+
 export function toolJsonSchema(tool: ToolName): Record<string, unknown> {
   const schema = zodToJsonSchema(CATALOG[tool].args, {
     target: 'jsonSchema7',

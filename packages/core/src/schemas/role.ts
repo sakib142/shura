@@ -9,7 +9,7 @@
  */
 
 import { z } from 'zod';
-import { TASK_KINDS, VENDORS } from '../vocabulary.js';
+import { TASK_KINDS, VENDORS, VERIFIER_OUTPUT_TOOL } from '../vocabulary.js';
 import { TOOL_CATALOG } from './tools.js';
 import {
   InvariantViolation,
@@ -24,6 +24,30 @@ export const ModelRefSchema = z.object({
   /** "vendor/model". Must resolve to a different vendor from the producer's. */
   fallback: z.string().min(1).optional(),
 });
+
+/**
+ * A verify role's optional second hat.
+ *
+ * Some reviewers are allowed to correct what they find rather than only
+ * reporting it. That capability does not belong on the verify task: rule 2 says
+ * a verifier holds no write grant, and weakening it to "except when we meant
+ * it" would leave nothing to enforce.
+ *
+ * So the grants live here instead, and are only ever used by a separate
+ * `produce` task created under the same agent's identity. The audit records a
+ * verify task that judged and a produce task that wrote. No single task does
+ * both, which is what rule 2 actually says.
+ *
+ * What this does give up: a fix written here is not itself reviewed by another
+ * agent. The human approving the pull request is the only check on it, so the
+ * pull request says which commits came from the reviewer.
+ */
+export const FixCapabilitySchema = z.object({
+  tools: z.array(z.enum(TOOL_NAMES)).min(1),
+  /** Path to the prompt for the fixing task, which is not the review prompt. */
+  instructions: z.string().min(1),
+});
+export type FixCapability = z.infer<typeof FixCapabilitySchema>;
 
 export const RoleDefinitionSchema = z.object({
   id: z.string().min(1),
@@ -41,6 +65,8 @@ export const RoleDefinitionSchema = z.object({
   instructions: z.string().min(1),
   output: z.record(z.string(), z.unknown()).default({}),
   never: z.array(z.string()).default([]),
+  /** Verify roles only: what this reviewer may do when it chooses to fix. */
+  fix: FixCapabilitySchema.optional(),
 });
 export type RoleDefinition = z.infer<typeof RoleDefinitionSchema>;
 
@@ -76,6 +102,30 @@ export function parseRole(raw: unknown): RoleDefinition {
   if (role.kind === 'verify') {
     assertVerifierGrantsAreReadOnly(role.id, role.tools);
   }
+  if (role.fix !== undefined) {
+    if (role.kind !== 'verify') {
+      throw new RoleInvalid(
+        `role "${role.id}" is kind "${role.kind}" and declares a "fix"; only a verify role has ` +
+          'something to fix, and a producer already holds its own write grants',
+      );
+    }
+    // A fixing task writes code; it does not also get to judge it. Letting one
+    // identity carry both in the same grant set is the thing rule 2 forbids,
+    // and the separation only survives if the two grant sets stay disjoint.
+    if (role.fix.tools.includes(VERIFIER_OUTPUT_TOOL)) {
+      throw new RoleInvalid(
+        `role "${role.id}" grants "${VERIFIER_OUTPUT_TOOL}" to its fixing task; a task that ` +
+          'writes the code must not also record the verdict on it',
+      );
+    }
+    const forbidden = role.fix.tools.filter((t) => role.never.includes(t));
+    if (forbidden.length > 0) {
+      throw new RoleInvalid(
+        `role "${role.id}" grants [${forbidden.join(', ')}] to its fixing task while listing ` +
+          'them under "never"',
+      );
+    }
+  }
 
   const contradiction = role.never.filter((t) => role.tools.includes(t));
   if (contradiction.length > 0) {
@@ -84,6 +134,28 @@ export function parseRole(raw: unknown): RoleDefinition {
     );
   }
   return role;
+}
+
+/**
+ * The produce-kind role a reviewer wears when it fixes what it found.
+ *
+ * Same agent, same model, different task kind and different grants. Returns
+ * undefined for a reviewer that may only report, which is every reviewer whose
+ * definition does not say otherwise.
+ */
+export function fixRoleOf(role: RoleDefinition): RoleDefinition | undefined {
+  if (role.fix === undefined) return undefined;
+  const { fix: _fix, ...rest } = role;
+  return {
+    ...rest,
+    // The id changes so the audit cannot confuse the two tasks, and so a role
+    // lookup by id can never return this one as something to schedule.
+    id: `${role.id}:fix`,
+    kind: 'produce',
+    tools: role.fix.tools,
+    instructions: role.fix.instructions,
+    output: {},
+  };
 }
 
 export { InvariantViolation };

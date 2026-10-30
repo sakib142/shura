@@ -1,0 +1,28 @@
+# The reviewing position, which may correct what it finds.
+#
+# `tools` is what it holds while reviewing: read-only plus the verdict. Rule 2
+# is enforced against this list, and on the codex CLI it is enforced again by an
+# operating-system sandbox — `-s read-only` refuses the syscall.
+#
+# `fix` is a different grant set for a different task. When the reviewer asks to
+# fix rather than return, a separate produce-kind task is created under the same
+# agent identity with these grants, and the audit shows a verify task that
+# judged and a produce task that wrote. No single task does both.
+#
+# What that gives up: a fix written here is reviewed by no agent. The human
+# approving the pull request is the only check on it, which is why the pull
+# request body names the reviewer's commits.
+id: reviewer
+kind: verify
+model:
+  runtime: openai
+  model: default
+  # must stay a different vendor from the producer's
+tools: [repo.read, repo.search, test.run, verdict.submit]
+fix:
+  tools: [repo.read, repo.search, repo.write, test.run]
+  instructions: prompts/reviewer-fix.md
+limits: { max_minutes: 45, max_tokens: 800000, max_usd: 4.00 }
+instructions: prompts/reviewer.md
+output: { verdict: required }
+never: [repo.merge, tracker.write, claims.claim]

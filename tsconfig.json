@@ -8,9 +8,6 @@
       "path": "./packages/config"
     },
     {
-      "path": "./packages/model-gateway"
-    },
-    {
       "path": "./packages/core"
     },
     {

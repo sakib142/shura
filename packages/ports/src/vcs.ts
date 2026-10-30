@@ -33,6 +33,20 @@ export interface Vcs {
     /** Which agent produced it. Recorded locally; GitHub attributes to the token. */
     author?: string;
     workItemId?: string;
+    /**
+     * Open it as a draft, where the host has drafts.
+     *
+     * For work that needs a person before it can go further: a branch that
+     * failed review, or one the loop gave up on. It still deserves to be a
+     * pull request — that is the thing a human can actually read, with the diff
+     * and the findings in one place — but it must not look ready to merge, and
+     * a draft cannot be merged until someone marks it ready.
+     *
+     * Advisory. A host without drafts, or a plan that does not include them,
+     * opens an ordinary pull request instead: a change a human needs to see is
+     * worth a plain pull request rather than no pull request at all.
+     */
+    draft?: boolean;
   }): Promise<ChangeRequestRef>;
   getDiff(ref: ChangeRequestRef): Promise<Diff>;
   runChecks(ref: ChangeRequestRef): Promise<CheckRun>;

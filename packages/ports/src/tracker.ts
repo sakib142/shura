@@ -13,6 +13,14 @@ export interface TrackerItem {
   readonly criteria: readonly string[];
   readonly state: string;
   readonly type: string;
+  /**
+   * The whole description as text.
+   *
+   * The criteria above are the checkable lines pulled out of it. A planner
+   * needs the rest as well: most tickets describe the feature in prose and
+   * leave the criteria to be derived, which is the planner's job.
+   */
+  readonly description?: string;
 }
 
 /** Our states, mapped onto whatever the tracker calls them. */

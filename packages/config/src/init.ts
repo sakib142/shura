@@ -49,10 +49,10 @@ tracker:
 # The producer and its verifier MUST be different vendors. Shura checks this
 # when it schedules the verification and refuses before spending anything.
 agents:
-  backend-developer:
+  builder:
     runtime: anthropic
     model: claude-sonnet-5
-  code-reviewer:
+  reviewer:
     runtime: openai
     model: gpt-6.1-sol
 

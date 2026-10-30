@@ -11,7 +11,6 @@
     "@shura/db": "workspace:*",
     "@shura/roles": "workspace:*",
     "@shura/git": "workspace:*",
-    "@shura/model-gateway": "workspace:*",
     "@shura/runtimes": "workspace:*",
     "@shura/ports": "workspace:*",
     "@shura/orchestrator": "workspace:*",

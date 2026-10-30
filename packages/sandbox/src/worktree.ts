@@ -45,6 +45,16 @@ export interface WorktreeOptions {
   readonly identity?: GitIdentity;
   /** Branches this task is allowed to push. Anything else is rejected. */
   readonly claimedBranches?: readonly string[];
+  /**
+   * Check out the commit rather than the branch.
+   *
+   * For a task that only reads. A worktree holding a branch blocks any fetch
+   * into that branch for as long as it lives — git refuses with "refusing to
+   * fetch into branch … checked out at …" — so a planner reading `main` would
+   * break the next run's refresh. Detached, it reads the same tree and holds
+   * nothing.
+   */
+  readonly detached?: boolean;
 }
 
 export class Worktree {
@@ -72,7 +82,20 @@ export class Worktree {
   static async create(opts: WorktreeOptions): Promise<Worktree> {
     const dir = await mkdtemp(join(tmpdir(), `shura-wt-${opts.taskId.slice(0, 8)}-`));
     const repo = new Git(opts.repoDir);
-    await repo.run('worktree', 'add', '--force', dir, opts.branch);
+
+    // Clear registrations whose directory is gone. A run killed mid-task — a
+    // timeout, a Ctrl-C — leaves its worktree registered, and the next run's
+    // fetch then fails on a branch nothing is really using.
+    await repo.tryRun('worktree', 'prune');
+
+    await repo.run(
+      'worktree',
+      'add',
+      '--force',
+      ...(opts.detached === true ? ['--detach'] : []),
+      dir,
+      opts.branch,
+    );
 
     const wt = new Worktree({
       id: dir,

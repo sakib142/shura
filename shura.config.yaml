@@ -46,20 +46,36 @@ tracker:
 # The producer and its verifier MUST be different vendors. Shura checks this
 # when it schedules the verification and refuses before spending anything.
 agents:
-  backend-developer:
+  # Three positions, one flow. The planner and the builder run on anthropic and
+  # the reviewer on openai, because rule 1 requires the reviewer to be a
+  # different vendor from the builder and Shura refuses the pair before
+  # spending anything if they are not.
+  #
+  # What kind of codebase they are working on is not a role — pass --domain.
+  planner:
     runtime: anthropic
-    model: claude-sonnet-5
-  code-reviewer:
+    model: default
+  builder:
+    runtime: anthropic
+    model: default
+  reviewer:
     runtime: openai
-    model: gpt-6.1-sol
+    model: default
+
   backlog-author:
     runtime: anthropic
-    model: claude-sonnet-5
+    model: default
   backlog-reviewer:
     runtime: openai
-    model: gpt-6.1-sol
+    model: default
 
 # Ceilings. A run stops at these rather than asking forgiveness.
+#
+# The effective limit is the LOWER of these and the role's own, so lowering
+# per_task_usd here caps every agent hard. Cost is driven by input tokens —
+# the transcript is re-sent every turn — so a repository the agent has to read
+# a lot of costs more than a focused change to a file it was pointed at.
+# Prompt caching makes the re-sending cheap; a narrow request makes it small.
 budgets:
   per_task_usd: 5
   per_task_tokens: 2000000

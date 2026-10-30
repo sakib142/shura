@@ -24,14 +24,44 @@ export interface GitResult {
   readonly stderr: string;
 }
 
+/**
+ * Strips anything credential-shaped out of text that is about to be shown,
+ * logged, persisted or handed to a model.
+ *
+ * This lives here, in the error, rather than at the call sites that happen to
+ * pass a credential. A remote URL carries its token in the argv, and GitError
+ * echoes the argv — so every caller that clones or pushes over HTTPS would have
+ * to remember to redact, and the one that forgot printed a live GitHub PAT to
+ * the terminal and into the event log.
+ *
+ * Redacting at the single point where git failures become text means no caller
+ * has to remember.
+ */
+export function redactSecrets(text: string): string {
+  return (
+    text
+      // https://user:token@host and https://token@host
+      .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, '$1[redacted]@')
+      // Bare tokens, in case one reaches an argument or a message directly.
+      .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}/g, 'github_pat_[redacted]')
+      .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}/g, 'gh*_[redacted]')
+      .replace(/\bsk-(?:ant|proj)-[A-Za-z0-9_-]{20,}/g, 'sk-[redacted]')
+      .replace(/\bAIza[A-Za-z0-9_-]{30,}/g, 'AIza[redacted]')
+  );
+}
+
 export class GitError extends Error {
-  constructor(
-    readonly args: readonly string[],
-    readonly code: number,
-    readonly stderr: string,
-  ) {
-    super(`git ${args.join(' ')} failed (${code}): ${stderr.trim()}`);
+  /** Redacted, so even reading `err.args` cannot recover a credential. */
+  readonly args: readonly string[];
+  readonly stderr: string;
+
+  constructor(args: readonly string[], readonly code: number, stderr: string) {
+    const safeArgs = args.map(redactSecrets);
+    const safeStderr = redactSecrets(stderr);
+    super(`git ${safeArgs.join(' ')} failed (${code}): ${safeStderr.trim()}`);
     this.name = 'GitError';
+    this.args = safeArgs;
+    this.stderr = safeStderr;
   }
 }
 
@@ -76,7 +106,7 @@ export class Git {
       return {
         ok: false,
         stdout: '',
-        stderr: err instanceof GitError ? err.stderr : String(err),
+        stderr: err instanceof GitError ? err.stderr : redactSecrets(String(err)),
       };
     }
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { RepoPath } from './paths.js';
 import {
-  RepoPath,
   TOOL_CATALOG,
   ToolArgsInvalid,
   assertCatalogComplete,

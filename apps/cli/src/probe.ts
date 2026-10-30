@@ -19,7 +19,7 @@ import { LocalVcs, initRepo } from '@shura/connectors';
 import { Worktree } from '@shura/sandbox';
 import { agentIdentity } from '@shura/git';
 import { loadAllRoles, withPrompt } from '@shura/roles';
-import { OpenAIRuntime } from '@shura/runtimes';
+import { CodexCliRuntime } from '@shura/runtimes';
 import { verifyChange } from '@shura/orchestrator';
 import { CASES, type Case } from '@shura/fault-corpus';
 
@@ -57,8 +57,8 @@ export async function probe(args: string[]): Promise<number> {
   }
 
   const roles = loadAllRoles();
-  const verifierRole = withPrompt(roles.get('code-reviewer')!);
-  const runtime = new OpenAIRuntime();
+  const verifierRole = withPrompt(roles.get('reviewer')!);
+  const runtime = new CodexCliRuntime();
 
   const { rows: wi } = await pool.query<{ id: string }>(
     `INSERT INTO work_items (key, type, title, acceptance_criteria, state)
@@ -89,7 +89,7 @@ async function runCase(
   pool: ReturnType<typeof createPool>,
   c: Case,
   workItem: { id: string; key: string; criteria: readonly string[] },
-  verifier: { runtime: OpenAIRuntime; role: ReturnType<typeof withPrompt>; name: string },
+  verifier: { runtime: CodexCliRuntime; role: ReturnType<typeof withPrompt>; name: string },
 ): Promise<Row> {
   await initRepo(REPO, FIXTURE);
   const vcsOpts = { repoDir: REPO, pool, checkCommand: CHECK };
@@ -102,7 +102,7 @@ async function runCase(
     repoDir: REPO,
     branch,
     taskId: `probe-${c.id}`,
-    identity: agentIdentity('dev-probe', 'backend-developer', 'claude-sonnet-5'),
+    identity: agentIdentity('dev-probe', 'builder', 'default'),
     claimedBranches: [branch],
   });
   try {
@@ -125,12 +125,6 @@ async function runCase(
     workItemId: workItem.id,
   });
 
-  const { rows } = await pool.query<{ id: string }>(
-    `INSERT INTO tasks (work_item_id, artifact_type, kind, role, attempt, status)
-     VALUES ($1,'code_change','verify','code-reviewer',1,'running') RETURNING id`,
-    [workItem.id],
-  );
-
   process.stdout.write(`  ${c.id.padEnd(24)} `);
   const result = await verifyChange({
     pool,
@@ -140,7 +134,6 @@ async function runCase(
     ref,
     workItem,
     verifier,
-    taskId: rows[0]!.id,
     attempt: 1,
   });
 

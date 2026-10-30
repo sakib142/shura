@@ -23,6 +23,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@shura/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@shura/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -57,9 +60,6 @@ importers:
       '@shura/git':
         specifier: workspace:*
         version: link:../../packages/git
-      '@shura/model-gateway':
-        specifier: workspace:*
-        version: link:../../packages/model-gateway
       '@shura/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
@@ -197,16 +197,6 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(jsdom@25.0.1)
 
-  packages/model-gateway:
-    dependencies:
-      '@shura/core':
-        specifier: workspace:*
-        version: link:../core
-    devDependencies:
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.20.5)(jsdom@25.0.1)
-
   packages/orchestrator:
     dependencies:
       '@shura/connectors':
@@ -277,9 +267,6 @@ importers:
       '@shura/core':
         specifier: workspace:*
         version: link:../core
-      '@shura/model-gateway':
-        specifier: workspace:*
-        version: link:../model-gateway
       '@shura/ports':
         specifier: workspace:*
         version: link:../ports

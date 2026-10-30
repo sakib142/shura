@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseRole, type ToolName } from '@shura/core';
+import { fixRoleOf, parseRole, type ToolName } from '@shura/core';
 import type { ToolCallRequest, ToolCallResult } from '@shura/ports';
 import {
   InMemoryAuditSink,
@@ -334,5 +334,93 @@ describe('credentials', () => {
     expect(r?.denialReason).toContain('[redacted]');
     expect(r?.denialReason).not.toContain('short-lived-token');
     expect(JSON.stringify(audit.entries)).not.toContain('short-lived-token');
+  });
+});
+
+/**
+ * A reviewer that fixes what it found, at the door.
+ *
+ * This is the test that matters for the whole arrangement. The same agent, the
+ * same model, the same role file — and whether it may write depends entirely on
+ * which task it is running. Reviewing, it cannot write. Fixing, as a separate
+ * produce task, it can.
+ *
+ * Rule 2 is untouched: what changed is that the writing happens in a different
+ * task, not that a verifier was allowed to write.
+ */
+describe('a reviewer that may fix what it found', () => {
+  const frontendReviewer = parseRole({
+    id: 'frontend-reviewer',
+    kind: 'verify',
+    model: { runtime: 'openai', model: 'gpt-6.1-sol' },
+    tools: ['repo.read', 'test.run', 'verdict.submit'],
+    fix: { tools: ['repo.read', 'repo.write', 'test.run'], instructions: 'prompts/fix.md' },
+    instructions: 'prompts/frontend-reviewer.md',
+  });
+  const fixRole = fixRoleOf(frontendReviewer)!;
+
+  it('cannot write while it is reviewing', async () => {
+    const { gateway, audit } = build(frontendReviewer);
+    const r = denial(
+      await gateway.call(req('repo.write', { path: 'a.ts', content: 'x' }, { roleKind: 'verify' })),
+    );
+    // Denied on the grant list, because declaring a fix capability does not put
+    // repo.write into what the reviewing task holds. The kind check behind it is
+    // the second line of defence and has its own test above.
+    expect(r?.denialReason).toMatch(/not granted/);
+    expect(r?.isRetryable).toBe(false);
+    expect(audit.denials()).toHaveLength(1);
+  });
+
+  it('is refused the write even if its reviewing grants wrongly carried it', async () => {
+    const audit = new InMemoryAuditSink();
+    const gateway = new McpToolGateway({
+      handlers: new Map<ToolName, ToolHandler>([['repo.write', async () => ({ written: true })]]),
+      audit,
+      // What a mis-written role, or a caller passing a hand-made list, looks like.
+      grantsFor: () => ({ roleId: frontendReviewer.id, kind: 'verify', tools: ['repo.write'] }),
+    });
+    const r = denial(
+      await gateway.call(req('repo.write', { path: 'a.ts', content: 'x' }, { roleKind: 'verify' })),
+    );
+    expect(r?.denialReason).toMatch(/no write grant/);
+  });
+
+  it('can write in the produce task it fixes from', async () => {
+    const { gateway } = build(fixRole);
+    const r = await gateway.call(
+      req('repo.write', { path: 'a.ts', content: 'x' }, { roleKind: 'produce' }),
+    );
+    expect(r.allowed).toBe(true);
+  });
+
+  // The judgment was recorded by the verify task that ran first. A task that
+  // writes the code does not also get to record the verdict on it.
+  it('cannot record a verdict from the task it fixes from', async () => {
+    const { gateway } = build(fixRole);
+    const r = denial(
+      await gateway.call(
+        req(
+          'verdict.submit',
+          { artifactId: 'a1', decision: 'PASS', criteria: [] },
+          { roleKind: 'produce' },
+        ),
+      ),
+    );
+    expect(r?.denialReason).toMatch(/not granted/);
+  });
+
+  // Declaring a fix capability must not widen what the reviewing task holds.
+  it('still cannot merge from either task', async () => {
+    for (const [role, kind] of [
+      [frontendReviewer, 'verify'],
+      [fixRole, 'produce'],
+    ] as const) {
+      const { gateway } = build(role);
+      const r = denial(
+        await gateway.call(req('repo.merge', { changeRequestId: '1', verdictId: 'v1' }, { roleKind: kind })),
+      );
+      expect(r?.errorCategory).toBe('permission');
+    }
   });
 });

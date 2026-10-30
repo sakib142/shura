@@ -65,12 +65,14 @@ export class JiraTracker implements Tracker {
       };
     };
 
+    const description = adfToText(issue.fields.description);
     return {
       key: issue.key,
       title: issue.fields.summary,
-      criteria: parseCriteria(adfToText(issue.fields.description)),
+      criteria: parseCriteria(description),
       state: issue.fields.status?.name ?? 'unknown',
       type: issue.fields.issuetype?.name ?? 'unknown',
+      description,
     };
   }
 

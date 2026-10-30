@@ -37,8 +37,8 @@ describe('loading', () => {
 
   it('loads the starter config it generates', () => {
     const { config } = loadConfig(withConfig(starterConfig('demo')));
-    expect(config.agents['backend-developer']?.runtime).toBe('anthropic');
-    expect(config.agents['code-reviewer']?.runtime).toBe('openai');
+    expect(config.agents['builder']?.runtime).toBe('anthropic');
+    expect(config.agents['reviewer']?.runtime).toBe('openai');
   });
 
   it('finds the config from a subdirectory, the way git finds .git', () => {
