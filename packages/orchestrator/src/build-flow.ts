@@ -203,6 +203,18 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
     });
 
     const buildTaskId = await createTask(req.pool, plan.workItemId, 'produce', req.builder.role.id, attempt);
+    /*
+     * Whether this attempt actually ran a producer.
+     *
+     * The task row has to exist before the pre-flight can decide, because the
+     * worktree the pre-flight reads and the claim it takes are both keyed on a
+     * task id. So the row is honest about its outcome instead: a producer that
+     * was never needed finishes `cancelled`, not `succeeded`. Recording it as
+     * succeeded made a pass that ran nothing indistinguishable from one that
+     * did the work, which is precisely the confusion this phase exists to
+     * remove — and it would have made the saving unmeasurable from the audit.
+     */
+    let spawnedProducer = false;
     const claimed = await claims.acquire({
       agentId: req.builder.name,
       taskId: buildTaskId,
@@ -265,6 +277,7 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
               'no outstanding finding is a code defect, so no build pass is being spent',
         });
       } else {
+        spawnedProducer = true;
         const gateway = new McpToolGateway({
           handlers: producerHandlers({
             worktree: wt,
@@ -375,7 +388,12 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
 
         if (onBranch.send === 'human') {
           await finishTask(req.pool, buildTaskId, 'failed');
-          emit({ kind: 'note', text: 'the builder changed nothing, and the branch is empty' });
+          emit({
+            kind: 'note',
+            text: spawnedProducer
+              ? 'the builder changed nothing, and the branch is empty'
+              : 'no producer ran this attempt, and the branch is empty',
+          });
           state = transition(state, 'human_requested');
           return {
             state,
@@ -387,7 +405,7 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
           };
         }
 
-        await finishTask(req.pool, buildTaskId, 'succeeded');
+        await finishTask(req.pool, buildTaskId, spawnedProducer ? 'succeeded' : 'cancelled');
         emit({
           kind: 'note',
           text:
