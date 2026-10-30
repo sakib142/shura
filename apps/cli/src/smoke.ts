@@ -11,10 +11,75 @@
  * only honest way to check, and on a subscription it costs nothing.
  */
 
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
 
-const exec = promisify(execFile);
+/**
+ * Run a CLI and collect its stdout, with **stdin closed**.
+ *
+ * `promisify(execFile)` hands the child an stdin pipe that nothing ever ends,
+ * and `codex exec` reads stdin when it is not a TTY. Against codex 0.161.0 the
+ * probe sat on "Reading additional input from stdin..." until the timeout, then
+ * read empty output and reported that codex had produced no answer — while
+ * codex answered the same prompt fine from a terminal. A green claude and a red
+ * codex also reads as "no cross-vendor pair", which is the one finding that
+ * stops a run outright, so the false alarm was the expensive kind.
+ *
+ * The runtime that does the real work never had this bug: it spawns with
+ * `stdio: ['ignore', ...]` (see codex-cli.ts). A probe wired differently from a
+ * run is not probing the run, so this is the same wiring.
+ *
+ * A timeout rejects here rather than resolving empty, because "it did not
+ * answer within 120s" and "it answered nothing" are different findings and the
+ * caller reports them differently.
+ */
+function exec(
+  bin: string,
+  args: readonly string[],
+  opts: { env?: NodeJS.ProcessEnv; timeout: number; maxBuffer?: number },
+): Promise<{ stdout: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, [...args], {
+      ...(opts.env === undefined ? {} : { env: opts.env }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const cap = opts.maxBuffer ?? 1 << 20;
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+
+    const finish = (err: Error | undefined): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill('SIGKILL');
+      if (err === undefined) resolve({ stdout });
+      else reject(err);
+    };
+
+    const timer = setTimeout(() => {
+      finish(new Error(`no answer within ${Math.round(opts.timeout / 1000)}s`));
+    }, opts.timeout);
+
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+      if (stdout.length > cap) finish(new Error(`more than ${cap} bytes of output`));
+    });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+
+    child.on('error', (err) => {
+      finish(err);
+    });
+    child.on('close', (code) => {
+      if (code === 0) finish(undefined);
+      else finish(new Error(stderr.trim().split('\n')[0] ?? `exited ${code ?? 'on a signal'}`));
+    });
+  });
+}
 
 interface Engine {
   readonly bin: string;
