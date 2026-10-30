@@ -28,6 +28,7 @@
  * fix, and it is recorded rather than glossed.
  */
 
+import { createHash } from 'node:crypto';
 import type { Pool } from 'pg';
 import {
   VerdictInputSchema,
@@ -35,12 +36,14 @@ import {
   afterVerdict,
   asJsonSchema,
   fixRoleOf,
+  whoSettles,
   selectVerifier,
   transition,
   type AcceptedVerdict,
   type ActorIdentity,
   type ArtifactState,
   type Decision,
+  type Finding,
   type RoleDefinition,
   type ToolName,
   type VerifierCandidate,
@@ -171,6 +174,19 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
   let state: ArtifactState = 'draft';
   let usd = 0;
   let priorFindings: unknown[] = [];
+  // The same findings as themselves rather than as prompt material, so the
+  // platform can ask who is able to settle them before it spawns anybody.
+  let priorFindingList: Finding[] = [];
+  /** Producer passes already bought, so none is bought twice. */
+  const bought = new Set<string>();
+  /**
+   * The producer has already been asked this and did not settle it.
+   *
+   * Not a judgement on the builder: it usually means the finding was never
+   * something an edit could fix. Either way, asking again is the one thing
+   * guaranteed not to help, so the finding goes to whoever else can act.
+   */
+  let producerDeclined = false;
   let buildFailure: string | undefined;
   let reviewerFixed = false;
 
@@ -213,85 +229,122 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
 
     let checks: { ok: boolean; summary: string; output: string };
     try {
-      const gateway = new McpToolGateway({
-        handlers: producerHandlers({
-          worktree: wt,
-          pool: req.pool,
-          workItemId: plan.workItemId,
-          workItemKey: plan.workItemKey,
-          checkCommand: req.checkCommand,
-          criterionCount: criteria.length,
-          onComment: (body) => emit({ kind: 'note', text: `${req.builder.name}: ${body}` }),
-          claims: {
-            claim: async (_claimBranch, fileGlobs) => {
-              const r = await claims.acquire({
-                agentId: req.builder.name,
-                taskId: buildTaskId,
-                branch,
-                fileGlobs,
-              });
-              return r.granted
-                ? { ok: true as const, expiresAt: r.expiresAt }
-                : { ok: false as const, reason: `${r.reason}; held by ${r.heldBy}` };
+      /*
+       * Is there anything for a builder to do, before one is paid for?
+       *
+       * Two conditions, both cheap to establish: the branch already carries
+       * commits the base does not, and nothing outstanding is a code defect.
+       * When both hold, a builder would read the repository, find the work
+       * already done, write nothing and stop. That is what four of the five
+       * builder passes on 29–30 October did — about 37 of the 44 minutes of
+       * agent time spent on an 89-line change.
+       *
+       * The checks still run below and the clean-worktree path still sends the
+       * branch to review, so skipping the spawn changes what is spent and
+       * nothing else.
+       */
+      const alreadyDone =
+        whatAnEmptyWorktreeMeans(await wt.git.tryRun('rev-list', '--count', `${base}..HEAD`))
+          .send === 'review' && whoSettles(priorFindingList) !== 'producer';
+
+      const head = await wt.git.tryRun('rev-parse', 'HEAD');
+      const key = head.ok ? passKey(head.stdout.trim(), priorFindingList) : undefined;
+      const repeat = key !== undefined && bought.has(key);
+      if (key !== undefined) bought.add(key);
+      if (repeat) producerDeclined = true;
+
+      const nothingToBuild = alreadyDone || repeat;
+
+      if (nothingToBuild) {
+        emit({
+          kind: 'note',
+          text: repeat
+            ? `${req.builder.name} has already been asked this — same commit, same findings — ` +
+              'so asking again would buy the same answer. Taking it to whoever else can act.'
+            : `nothing for ${req.builder.name} to do — ${branch} already carries the work and ` +
+              'no outstanding finding is a code defect, so no build pass is being spent',
+        });
+      } else {
+        const gateway = new McpToolGateway({
+          handlers: producerHandlers({
+            worktree: wt,
+            pool: req.pool,
+            workItemId: plan.workItemId,
+            workItemKey: plan.workItemKey,
+            checkCommand: req.checkCommand,
+            criterionCount: criteria.length,
+            onComment: (body) => emit({ kind: 'note', text: `${req.builder.name}: ${body}` }),
+            claims: {
+              claim: async (_claimBranch, fileGlobs) => {
+                const r = await claims.acquire({
+                  agentId: req.builder.name,
+                  taskId: buildTaskId,
+                  branch,
+                  fileGlobs,
+                });
+                return r.granted
+                  ? { ok: true as const, expiresAt: r.expiresAt }
+                  : { ok: false as const, reason: `${r.reason}; held by ${r.heldBy}` };
+              },
             },
+          }) as Map<ToolName, ToolHandler>,
+          audit,
+          effects,
+          grantsFor: () => resolveGrants(req.builder.role),
+        });
+
+        const ran = await drive(req.builder.runtime, {
+          role: req.builder.role,
+          context: {
+            workItemKey: plan.workItemKey,
+            title: plan.title,
+            artifactType: 'code_change',
+            acceptanceCriteria: criteria,
+            plan: approvedPlan,
+            attempt,
+            ...(priorFindings.length === 0 ? {} : { priorFindings }),
+            ...(buildFailure === undefined ? {} : { buildFailure }),
           },
-        }) as Map<ToolName, ToolHandler>,
-        audit,
-        effects,
-        grantsFor: () => resolveGrants(req.builder.role),
-      });
+          tools: req.builder.role.tools,
+          limits: limitsOf(req.builder.role),
+          workdir: wt.dir,
+          taskId: buildTaskId,
+          agentId: req.builder.name,
+          kind: 'produce',
+          gateway,
+          emit: (e) => emit({ kind: 'agent', actor: req.builder.name, event: e }),
+        });
+        usd += ran.usd;
 
-      const ran = await drive(req.builder.runtime, {
-        role: req.builder.role,
-        context: {
-          workItemKey: plan.workItemKey,
-          title: plan.title,
-          artifactType: 'code_change',
-          acceptanceCriteria: criteria,
-          plan: approvedPlan,
-          attempt,
-          ...(priorFindings.length === 0 ? {} : { priorFindings }),
-          ...(buildFailure === undefined ? {} : { buildFailure }),
-        },
-        tools: req.builder.role.tools,
-        limits: limitsOf(req.builder.role),
-        workdir: wt.dir,
-        taskId: buildTaskId,
-        agentId: req.builder.name,
-        kind: 'produce',
-        gateway,
-        emit: (e) => emit({ kind: 'agent', actor: req.builder.name, event: e }),
-      });
-      usd += ran.usd;
-
-      // An agent that stopped badly has not finished, and its half-written
-      // change must not be published as though it had.
-      //
-      // This is not hypothetical: a builder hit its spend ceiling partway
-      // through, the checks passed anyway — half a change often does — and a
-      // branch carrying one test file and nothing else was pushed as complete
-      // work. Green checks say "nothing is broken", never "the work is done".
-      if (ran.error !== undefined) {
-        await finishTask(req.pool, buildTaskId, 'failed');
-        emit({ kind: 'note', text: `${req.builder.name} stopped: ${ran.error}` });
-        emit({ kind: 'note', text: 'not publishing a part-written change' });
-        state = transition(state, 'human_requested');
-        await note(
-          `${req.builder.name} stopped before finishing: ${ran.error}\n` +
-            'Nothing was published. The branch is untouched.' +
-            (ran.error.includes('ceiling')
-              ? '\n\nRaise `budgets.per_task_usd` in shura.config.yaml, or narrow the request ' +
-                'so there is less to read.'
-              : ''),
-        );
-        return {
-          state,
-          attempts: attempt,
-          branch,
-          reviewerFixed,
-          reason: ran.error,
-          usd,
-        };
+        // An agent that stopped badly has not finished, and its half-written
+        // change must not be published as though it had.
+        //
+        // This is not hypothetical: a builder hit its spend ceiling partway
+        // through, the checks passed anyway — half a change often does — and a
+        // branch carrying one test file and nothing else was pushed as complete
+        // work. Green checks say "nothing is broken", never "the work is done".
+        if (ran.error !== undefined) {
+          await finishTask(req.pool, buildTaskId, 'failed');
+          emit({ kind: 'note', text: `${req.builder.name} stopped: ${ran.error}` });
+          emit({ kind: 'note', text: 'not publishing a part-written change' });
+          state = transition(state, 'human_requested');
+          await note(
+            `${req.builder.name} stopped before finishing: ${ran.error}\n` +
+              'Nothing was published. The branch is untouched.' +
+              (ran.error.includes('ceiling')
+                ? '\n\nRaise `budgets.per_task_usd` in shura.config.yaml, or narrow the request ' +
+                  'so there is less to read.'
+                : ''),
+          );
+          return {
+            state,
+            attempts: attempt,
+            branch,
+            reviewerFixed,
+            reason: ran.error,
+            usd,
+          };
+        }
       }
 
       // The gate the user asked for: the build is proved green in the same
@@ -305,6 +358,7 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
       if (!checks.ok) {
         buildFailure = checks.output;
         priorFindings = [];
+        priorFindingList = [];
         await finishTask(req.pool, buildTaskId, 'failed');
         emit({
           kind: 'note',
@@ -506,7 +560,33 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
     }
 
     /* --------------------------------------------------------------- fix */
-    const wantsFix = v.submission.action === 'fix';
+    //
+    // Who can settle what was found, which is not the same question as what the
+    // reviewer would prefer to do about it.
+    //
+    // A reviewer may report a finding no edit can address — "I could not
+    // establish this from what I was given" — and still ask for it to be sent
+    // back. Honouring that buys a builder pass that reads the code, concludes
+    // correctly that there is nothing to write, and stops; that happened, cost
+    // $2.86, and left a human holding a green branch with no pull request. So
+    // the reviewer chooses between fixing and returning, and the platform
+    // decides who is even able to act.
+    const foundThis: Finding[] = [
+      ...v.submission.criteria.flatMap((c) => (c.finding === undefined ? [] : [c.finding])),
+      ...v.submission.extraFindings,
+    ];
+    const settles = whoSettles(foundThis);
+
+    const wantsFix = v.submission.action === 'fix' || settles === 'fixer' || producerDeclined;
+    if (settles === 'fixer' && v.submission.action !== 'fix') {
+      emit({
+        kind: 'note',
+        text:
+          `${chosen.agentId} asked to send it back, but nothing it found is a code defect — ` +
+          'no edit would settle it. Giving it to the fix task, which can write and can run ' +
+          "the project's own tools.",
+      });
+    }
     if (wantsFix && fixRole === undefined) {
       emit({
         kind: 'note',
@@ -627,6 +707,7 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
       ...v.submission.criteria.filter((c) => c.status === 'not_met'),
       ...v.submission.extraFindings.map((f) => ({ index: -1, status: 'not_met', finding: f })),
     ];
+    priorFindingList = foundThis;
   }
 
   return {
@@ -813,6 +894,27 @@ export async function reviewBranch(
     usd,
     ...(error === undefined ? {} : { error }),
   };
+}
+
+/**
+ * What a producer pass would be working on, as one value.
+ *
+ * A pass is defined by the commit it starts from and the findings it is handed.
+ * If both repeat, so will the outcome — the same agent, the same code, the same
+ * instructions — so buying it again buys the same nothing. Caps alone do not
+ * save you here: the loop simply spends all three attempts arriving at the same
+ * place.
+ *
+ * Deliberately not the whole finding: severity and line numbers move while the
+ * substance stays, and this question is "have I already asked for this?", not
+ * "is this byte-identical?".
+ */
+export function passKey(headSha: string, findings: readonly Finding[]): string {
+  const substance = findings
+    .map((f) => `${f.kind}\u0000${f.file ?? ''}\u0000${f.claim}`)
+    .sort()
+    .join('\u0001');
+  return createHash('sha256').update(`${headSha}\u0002${substance}`).digest('hex').slice(0, 32);
 }
 
 /**
