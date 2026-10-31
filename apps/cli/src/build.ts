@@ -647,16 +647,7 @@ async function buildPhase(b: BuildArgs): Promise<number> {
           ? surveyed
           : config.repo.checks;
 
-  if (checksFlag === undefined && plan.checks.length === 0) {
-    if (surveyed.length > 0) {
-      console.log(`gate      from the repository's own survey: ${surveyed.slice(2).join(' ')}`);
-    } else if (plan.survey !== undefined) {
-      console.log(
-        'gate      none. The survey found nothing that passes on the base, so no command can\n' +
-          '          say this change is safe — the reviewer is the only check there is.',
-      );
-    }
-  }
+
   const base = flag(args, 'base') ?? plan.base;
 
   /*
@@ -704,12 +695,36 @@ async function buildPhase(b: BuildArgs): Promise<number> {
     return 2;
   }
 
-  if (plan.checks.length === 0 && checksFlag === undefined) {
-    // Only reachable for a plan recorded before the plan carried its target.
+  /*
+   * One line, naming the gate and where it came from.
+   *
+   * There were briefly two, and they disagreed: one announced the survey's
+   * command while the other said the configured one was in use, and a third
+   * case claimed there was no gate at all when the configuration had in fact
+   * supplied one. This is the single place an operator looks to find out what
+   * they are about to be held to, so it says exactly what will run and on whose
+   * authority — and admits when nothing will.
+   */
+  const gateSource =
+    checksFlag !== undefined
+      ? 'you passed --checks'
+      : plan.checks.length > 0
+        ? 'the plan was made with it'
+        : surveyed.length > 0
+          ? "the repository's own survey"
+          : config.repo.checks.length > 0
+            ? 'the configuration, which names a repository that may not be this one'
+            : undefined;
+
+  console.log(
+    gateSource === undefined
+      ? 'gate      none — nothing here can tell you this change is safe, so the\n' +
+        "          reviewer's judgement is the only check there is."
+      : `gate      ${checks.slice(2).join(' ') || checks.join(' ')}  (${gateSource})`,
+  );
+  if (gateSource?.startsWith('the configuration') === true && plan.survey !== undefined) {
     console.log(
-      `plan ${plan.id.slice(0, 8)} predates plans carrying their own check command, so the ` +
-        `configured one is being used: ${config.repo.checks.join(' ')}\n` +
-        'Pass --checks if that is not how this repository is built.',
+      '          Its own survey found nothing that passes on the base, so this may not pass either.',
     );
   }
 
