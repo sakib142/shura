@@ -7,7 +7,14 @@
  */
 
 import type { Pool } from 'pg';
-import type { PlanInput, PlanStatus, PlanSubmission, PlannedFile, Vendor } from '@shura/core';
+import type {
+  PlanInput,
+  PlanStatus,
+  PlanSubmission,
+  PlannedFile,
+  RepoSurvey,
+  Vendor,
+} from '@shura/core';
 
 export interface PlanSource {
   /** Where the work happens, as "owner/name" or a local path. */
@@ -46,6 +53,8 @@ export interface StoredPlan {
   readonly criteria: readonly string[];
   readonly openQuestions: readonly string[];
   readonly answers: readonly string[];
+  /** Absent on plans recorded before the survey existed. */
+  readonly survey?: RepoSurvey;
   readonly author: string;
   readonly vendor: Vendor;
   readonly model: string;
@@ -73,6 +82,7 @@ interface Row {
   out_of_scope: string[];
   criteria: string[];
   open_questions: string[];
+  survey: RepoSurvey | null;
   answers: string[];
   author: string;
   vendor: Vendor;
@@ -87,7 +97,7 @@ interface Row {
 const SELECT = `
   SELECT p.id, p.work_item_id, w.key, w.title, p.task_id, p.repo, p.request, p.source,
          p.base, p.checks, p.understanding, p.approach, p.files, p.out_of_scope, p.criteria,
-         p.open_questions, p.answers, p.author, p.vendor, p.model, p.cost_usd, p.status,
+         p.open_questions, p.answers, p.survey, p.author, p.vendor, p.model, p.cost_usd, p.status,
          p.branch, p.change_request, p.created_at
     FROM plans p JOIN work_items w ON w.id = p.work_item_id`;
 
@@ -109,6 +119,7 @@ function hydrate(r: Row): StoredPlan {
     outOfScope: r.out_of_scope,
     criteria: r.criteria,
     openQuestions: r.open_questions,
+    ...(r.survey === null ? {} : { survey: r.survey }),
     answers: r.answers,
     author: r.author,
     vendor: r.vendor,
@@ -137,8 +148,10 @@ export class PgPlans {
     const { rows } = await this.#pool.query<{ id: string }>(
       `INSERT INTO plans (work_item_id, task_id, repo, request, source, base, checks,
                           understanding, approach, files, out_of_scope, criteria, open_questions,
+                          survey,
                           author, vendor, model, tokens_in, tokens_out, cost_usd)
        VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,
+               $20::jsonb,
                $14,$15,$16,$17,$18,$19)
        RETURNING id`,
       [
@@ -161,6 +174,7 @@ export class PgPlans {
         plan.cost.tokensIn,
         plan.cost.tokensOut,
         plan.cost.usd,
+        JSON.stringify(plan.survey),
       ],
     );
     return rows[0]!.id;
@@ -276,7 +290,8 @@ export class PgPlans {
            'files', files,
            'out_of_scope', out_of_scope,
            'criteria', criteria,
-           'open_questions', open_questions
+           'open_questions', open_questions,
+           'survey', survey
          ),
          understanding  = $2,
          approach       = $3,
@@ -284,6 +299,7 @@ export class PgPlans {
          out_of_scope   = $5::jsonb,
          criteria       = $6::jsonb,
          open_questions = $8::jsonb,
+         survey         = $12::jsonb,
          tokens_in      = tokens_in  + $9,
          tokens_out     = tokens_out + $10,
          cost_usd       = cost_usd   + $11
@@ -300,6 +316,7 @@ export class PgPlans {
         spend.tokensIn,
         spend.tokensOut,
         spend.usd,
+        JSON.stringify(revised.survey),
       ],
     );
     if (rowCount === 0) {

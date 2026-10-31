@@ -66,6 +66,19 @@ const asPlanned: PlanSubmission = {
     'Given a signed-in user, when they save, then profiles.your_detail holds the value',
   ],
   openQuestions: ['Column name: I am going with your_detail. Say so now if it should differ.'],
+  survey: {
+    install: 'npm ci',
+    checks: [
+      {
+        name: 'build',
+        command: 'npm run build',
+        proves: 'it bundles; it does not type-check, because tsconfig.json has files: []',
+        greenOnBase: true,
+      },
+      { name: 'lint', command: 'npm run lint', proves: 'style rules hold', greenOnBase: false },
+    ],
+    readFiles: ['package.json', 'tsconfig.json'],
+  },
   author: { agent: 'plan-01', vendor: 'anthropic', model: 'default' },
   cost: { tokensIn: 900, tokensOut: 400, usd: 1.2 },
 };
@@ -78,6 +91,19 @@ const revised = {
   outOfScope: ['Showing it anywhere else.'],
   criteria: ['Given a signed-in user, when they save, then profiles.bio holds the value'],
   openQuestions: [],
+  survey: {
+    install: 'npm ci',
+    checks: [
+      {
+        name: 'build',
+        command: 'npm run build',
+        proves: 'it bundles; it does not type-check, because tsconfig.json has files: []',
+        greenOnBase: true,
+      },
+      { name: 'lint', command: 'npm run lint', proves: 'style rules hold', greenOnBase: false },
+    ],
+    readFiles: ['package.json', 'tsconfig.json'],
+  },
 };
 
 function scripted(output: unknown, seen: RunRequest[]): AgentRuntime {

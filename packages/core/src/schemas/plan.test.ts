@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PlanRejected, acceptPlan, approvability } from './plan.js';
+import { PlanRejected, acceptPlan, approvability, gateFromSurvey } from './plan.js';
 
 const plan = {
   understanding: 'The orders table has no way to narrow by date; the request wants one.',
@@ -10,6 +10,13 @@ const plan = {
     'Given orders in March and April, when the range is set to April, then only April orders are listed',
   ],
   openQuestions: [],
+  survey: {
+    install: 'pnpm install',
+    checks: [
+      { name: 'tests', command: 'pnpm test', proves: 'the suite passes', greenOnBase: true },
+    ],
+    readFiles: ['package.json'],
+  },
   author: { agent: 'plan-01', vendor: 'anthropic', model: 'claude-sonnet-5' },
   cost: { tokensIn: 100, tokensOut: 50, usd: 0.01 },
 };
@@ -98,3 +105,59 @@ describe('the approval gate', () => {
     });
   });
 });
+
+/*
+ * The gate a surveyed repository can hold itself to.
+ *
+ * `--checks` used to be a mandatory, hand-authored, per-repo fact — "the one
+ * thing you must get right per repo", as STATE.md put it — and on the only
+ * repository it was ever used against it was wrong: `npm run build` was
+ * believed to type-check when that project's tsconfig.json is
+ * `{"files": [], "references": [...]}`, so bare `tsc` checks nothing. One
+ * acceptance criterion then demanded a comparison nothing in the pipeline could
+ * evaluate, and the run burned two verdicts and three builder passes on it.
+ */
+describe('deriving a gate from what the repository said about itself', () => {
+  const check = (over: Record<string, unknown> = {}) => ({
+    name: 'build',
+    command: 'npm run build',
+    proves: 'it bundles',
+    greenOnBase: true,
+    ...over,
+  });
+
+  it('runs every check that passes on the base', () => {
+    expect(
+      gateFromSurvey({
+        checks: [check(), check({ name: 'tests', command: 'npm test' })],
+        readFiles: [],
+      }),
+    ).toEqual(['sh', '-c', 'npm run build && npm test']);
+  });
+
+  /*
+   * A check already failing cannot be a gate. Demanding green from a project
+   * whose lint has been red for a year produces a gate nothing can ever pass,
+   * and the loop spends its whole cap discovering that.
+   */
+  it('leaves out a check that was already failing', () => {
+    expect(
+      gateFromSurvey({
+        checks: [check(), check({ name: 'lint', command: 'npm run lint', greenOnBase: false })],
+        readFiles: [],
+      }),
+    ).toEqual(['sh', '-c', 'npm run build']);
+  });
+
+  /*
+   * Empty is meaningful, not a failure to answer: it says nothing in this
+   * repository can tell you the change is safe. The caller is expected to say
+   * so out loud rather than quietly publishing.
+   */
+  it('gives no gate when nothing passes, and none when there is nothing', () => {
+    expect(gateFromSurvey({ checks: [check({ greenOnBase: false })], readFiles: [] })).toEqual([]);
+    expect(gateFromSurvey({ checks: [], readFiles: [] })).toEqual([]);
+    expect(gateFromSurvey(undefined)).toEqual([]);
+  });
+});
+

@@ -24,7 +24,7 @@ type Pool = ReturnType<typeof createPool>;
 import { CheckoutVcs, GitHubVcs, JiraTracker, githubDefaultBranch } from '@shura/connectors';
 import { loadConfig, type ForgeConfig, type LoadedConfig } from '@shura/config';
 import { loadAllRoles, withPrompt } from '@shura/roles';
-import type { RoleDefinition } from '@shura/core';
+import { gateFromSurvey, type RoleDefinition } from '@shura/core';
 import type { AgentRuntime, Tracker } from '@shura/ports';
 import {
   buildApprovedPlan,
@@ -497,7 +497,16 @@ async function planPhase(p: PlanArgs): Promise<number> {
       request,
       source,
       base: repo.base,
-      checks: repo.checks,
+      /*
+       * Only what a human explicitly asked for.
+       *
+       * `repo.checks` falls back to the configured command, and recording that
+       * made a configured default indistinguishable from an instruction — so a
+       * plan always carried checks and the survey could never be used. An empty
+       * list here means "nobody said", which is what lets the repository's own
+       * answer win at build time.
+       */
+      checks: flag(args, 'checks') === undefined ? [] : repo.checks,
     },
     planner: { runtime: agents.planner.runtime, role: agents.planner.role, name: agents.planner.name },
     onEvent: render,
@@ -613,13 +622,41 @@ async function buildPhase(b: BuildArgs): Promise<number> {
   // one either branches from the wrong ref or verifies nothing, and says
   // nothing either way. A flag still wins, for the case where the plan was
   // recorded with a command that has since changed.
+  /*
+   * Which gate this build is held to, most specific first:
+   *
+   *   1. --checks, because someone typed it just now
+   *   2. the plan's own checks, meaning someone typed it at plan time
+   *   3. what the repository said about itself — the surveyed checks that were
+   *      green on the base, since one already failing cannot be a gate
+   *   4. the configured command, which belongs to whichever repository the
+   *      config names and may not be this one
+   *
+   * Three above four deliberately: a repository's own answer about how it
+   * verifies itself beats an operator's guess about it. `--checks` is now a
+   * fallback rather than a prerequisite.
+   */
   const checksFlag = flag(args, 'checks');
+  const surveyed = gateFromSurvey(plan.survey);
   const checks =
     checksFlag !== undefined
       ? ['sh', '-c', checksFlag]
       : plan.checks.length > 0
         ? [...plan.checks]
-        : config.repo.checks;
+        : surveyed.length > 0
+          ? surveyed
+          : config.repo.checks;
+
+  if (checksFlag === undefined && plan.checks.length === 0) {
+    if (surveyed.length > 0) {
+      console.log(`gate      from the repository's own survey: ${surveyed.slice(2).join(' ')}`);
+    } else if (plan.survey !== undefined) {
+      console.log(
+        'gate      none. The survey found nothing that passes on the base, so no command can\n' +
+          '          say this change is safe — the reviewer is the only check there is.',
+      );
+    }
+  }
   const base = flag(args, 'base') ?? plan.base;
 
   /*

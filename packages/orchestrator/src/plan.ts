@@ -91,6 +91,7 @@ export async function planWorkItem(req: PlanRequest): Promise<PlanOutcome> {
 
   let submitted: PlanSubmission | undefined;
   let spend = { tokensIn: 0, tokensOut: 0, usd: 0 };
+  let rejection: { message: string; output: unknown } | undefined;
 
   try {
     const gateway = new McpToolGateway({
@@ -117,59 +118,91 @@ export async function planWorkItem(req: PlanRequest): Promise<PlanOutcome> {
       grantsFor: () => resolveGrants(req.planner.role),
     });
 
-    const result = await drive(req.planner.runtime, {
-      role: req.planner.role,
-      context: {
-        workItemKey: req.workItem.key,
-        title: req.workItem.title,
-        artifactType: 'plan',
-        acceptanceCriteria: [],
-        request: req.source.request,
-        attempt: 1,
-      },
-      tools: req.planner.role.tools,
-      limits: limitsOf(req.planner.role),
-      workdir: wt.dir,
-      // A CLI-driven planner cannot call plan.submit; its final answer carries
-      // the plan instead, held to exactly the same shape.
-      outputSchema: asJsonSchema(PlanInputSchema),
-      taskId,
-      agentId: req.planner.name,
-      kind: 'produce',
-      gateway,
-      emit: (e) => {
-        if (e.t === 'usage') {
-          spend = {
-            tokensIn: spend.tokensIn + e.tokensIn,
-            tokensOut: spend.tokensOut + e.tokensOut,
-            usd: e.usd,
-          };
-        }
-        emit({ kind: 'agent', actor: req.planner.name, event: e });
-      },
-    });
-    spend = { ...spend, usd: result.usd };
-
-    // The structured answer, when the tool was not used. Identity and cost are
-    // attached here rather than asked of the model, for the same reason the
-    // tool handler attaches them: the platform knows which agent ran.
-    if (submitted === undefined && result.output !== undefined) {
-      try {
-        submitted = acceptPlan({
-          ...(result.output as Record<string, unknown>),
-          author: {
-            agent: req.planner.name,
-            vendor: req.planner.runtime.vendor,
-            model: modelOf(req.planner.role),
-          },
-          cost: spend,
+    /*
+     * Two attempts, because a schema rejection used to end the run.
+     *
+     * A planner that returns four criteria without Given/When/Then has done
+     * nearly all the work — it read the repository, it decided what to do — and
+     * the only thing wrong is the shape of the answer. Ending there spends a
+     * whole pass and produces nothing, which happened on 30 October.
+     *
+     * `PlanRejected` already carries the validation detail, and its own comment
+     * says that is "so it can correct itself". That was true of the plan.submit
+     * tool path and never of the structured-output path, which is the one every
+     * CLI runtime uses.
+     *
+     * The correction is handed the rejected answer as well as the errors, so it
+     * edits rather than starts again — otherwise the retry costs as much as the
+     * attempt it is fixing.
+     */
+    for (let attempt = 1; attempt <= 2 && submitted === undefined; attempt++) {
+      if (attempt > 1) {
+        emit({
+          kind: 'note',
+          text: `asking ${req.planner.name} to correct the plan rather than ending the run`,
         });
-      } catch (err) {
-        emit({ kind: 'note', text: `the plan was rejected: ${(err as Error).message}` });
       }
-    }
-    if (result.error !== undefined && submitted === undefined) {
-      emit({ kind: 'note', text: `${req.planner.name} stopped: ${result.error}` });
+      const result = await drive(req.planner.runtime, {
+        role: req.planner.role,
+        context: {
+          workItemKey: req.workItem.key,
+          title: req.workItem.title,
+          artifactType: 'plan',
+          acceptanceCriteria: [],
+          request:
+            attempt === 1 || rejection === undefined
+              ? req.source.request
+              : correctionBrief(req.source.request, rejection),
+          attempt,
+        },
+        tools: req.planner.role.tools,
+        limits: limitsOf(req.planner.role),
+        workdir: wt.dir,
+        // A CLI-driven planner cannot call plan.submit; its final answer carries
+        // the plan instead, held to exactly the same shape.
+        outputSchema: asJsonSchema(PlanInputSchema),
+        taskId,
+        agentId: req.planner.name,
+        kind: 'produce',
+        gateway,
+        emit: (e) => {
+          if (e.t === 'usage') {
+            spend = {
+              tokensIn: spend.tokensIn + e.tokensIn,
+              tokensOut: spend.tokensOut + e.tokensOut,
+              usd: e.usd,
+            };
+          }
+          emit({ kind: 'agent', actor: req.planner.name, event: e });
+        },
+      });
+      spend = { ...spend, usd: result.usd };
+
+      // The structured answer, when the tool was not used. Identity and cost are
+      // attached here rather than asked of the model, for the same reason the
+      // tool handler attaches them: the platform knows which agent ran.
+      if (submitted === undefined && result.output !== undefined) {
+        try {
+          submitted = acceptPlan({
+            ...(result.output as Record<string, unknown>),
+            author: {
+              agent: req.planner.name,
+              vendor: req.planner.runtime.vendor,
+              model: modelOf(req.planner.role),
+            },
+            cost: spend,
+          });
+        } catch (err) {
+          rejection = { message: (err as Error).message, output: result.output };
+          emit({ kind: 'note', text: `the plan was rejected: ${rejection.message}` });
+        }
+      }
+      if (result.error !== undefined && submitted === undefined) {
+        emit({ kind: 'note', text: `${req.planner.name} stopped: ${result.error}` });
+        // A run that stopped badly will stop the same way again; only a rejected
+        // shape is worth asking twice for.
+        break;
+      }
     }
   } finally {
     await wt.destroy();
@@ -352,10 +385,11 @@ export async function revisePlan(req: RevisePlanRequest): Promise<ReviseOutcome>
 
   // The identity and cost the submission carries belong to the plan row, which
   // already has them; what the caller needs back is the body.
-  const { understanding, approach, files, outOfScope, criteria, openQuestions } = submitted;
+  const { understanding, approach, files, outOfScope, criteria, openQuestions, survey } =
+    submitted;
   return {
     ok: true,
-    revised: { understanding, approach, files, outOfScope, criteria, openQuestions },
+    revised: { understanding, approach, files, outOfScope, criteria, openQuestions, survey },
     spend,
   };
 }
@@ -495,6 +529,33 @@ export function renderRevision(before: StoredPlan, after: PlanInput): string {
   return lines.join('\n');
 }
 
+/**
+ * What a planner is told when its answer was the wrong shape.
+ *
+ * The rejected answer goes back with the errors. Without it the correction is a
+ * second full attempt — re-reading the repository to rebuild an understanding
+ * it already had — and costs as much as the thing it is fixing.
+ */
+function correctionBrief(request: string, rejection: { message: string; output: unknown }): string {
+  return [
+    'Your plan was refused because of its shape, not its content. Correct it.',
+    '',
+    'What was wrong:',
+    `  ${rejection.message}`,
+    '',
+    'Do not start again and do not re-read the repository. Take the answer below,',
+    'fix exactly what the errors name, and submit the whole thing again. Every',
+    'acceptance criterion must read "Given <state>, when <action>, then',
+    '<observable outcome>" — all three words, in that order.',
+    '',
+    'YOUR REJECTED ANSWER',
+    indent(JSON.stringify(rejection.output, null, 2).slice(0, 12_000)),
+    '',
+    'THE ORIGINAL REQUEST',
+    indent(request),
+  ].join('\n');
+}
+
 /** Everything a human needs to read before approving, as plain text. */
 export function renderPlan(p: StoredPlan): string {
   const lines: string[] = [
@@ -519,6 +580,36 @@ export function renderPlan(p: StoredPlan): string {
 
   if (p.outOfScope.length > 0) {
     lines.push('', 'OUT OF SCOPE', ...p.outOfScope.map((o) => `  - ${o}`));
+  }
+
+  /*
+   * The survey is shown because the approver is the only one who can say "that
+   * is not what that command proves". Everything downstream treats it as fact.
+   */
+  if (p.survey !== undefined) {
+    lines.push(
+      '',
+      'HOW THIS REPOSITORY VERIFIES ITSELF  (discovered, not configured)',
+      ...(p.survey.install === undefined ? [] : [`  install   ${p.survey.install}`]),
+    );
+    if (p.survey.checks.length === 0) {
+      lines.push(
+        '  nothing — this repository has no command that can tell you the change is safe.',
+        '  Whatever the reviewer concludes is the only check there is.',
+      );
+    }
+    for (const c of p.survey.checks) {
+      lines.push(
+        `  ${c.greenOnBase ? 'green' : 'RED  '}  ${c.name}: ${c.command}`,
+        `         proves: ${c.proves}`,
+      );
+    }
+    if (p.survey.checks.some((c) => !c.greenOnBase)) {
+      lines.push(
+        '  A check already failing on the base cannot be a gate. What it can do is',
+        '  show whether this change made it worse.',
+      );
+    }
   }
 
   lines.push(

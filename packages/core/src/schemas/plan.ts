@@ -57,6 +57,102 @@ export const PlannedFileSchema = z.object({
 export type PlannedFile = z.infer<typeof PlannedFileSchema>;
 
 /**
+ * One way this repository verifies itself, in its own words.
+ *
+ * `proves` is the field that matters and the one a human would skip. A green
+ * `npm run build` on a repo whose `tsconfig.json` is `{"files": [], …}` proves
+ * that Vite bundled, and nothing at all about types — we asserted otherwise on
+ * 30 October and it cost two verdicts and three builder passes. So the planner
+ * has to say what a pass establishes, and say it narrowly.
+ *
+ * `greenOnBase` is measured, not assumed. A repository whose lint has been red
+ * for a year is normal, and a gate that demands green there can never pass;
+ * knowing which checks are already failing is what makes "no new failures"
+ * expressible later.
+ */
+export const SurveyCheckSchema = z.object({
+  name: z
+    .string()
+    .min(1)
+    .max(40)
+    .describe("A short name in the project's own terms: build, unit tests, typecheck, lint"),
+  command: z
+    .string()
+    .min(1)
+    .max(500)
+    .describe('The shell command, exactly as this repository runs it'),
+  proves: z
+    .string()
+    .min(1)
+    .max(300)
+    .describe(
+      'What a passing run establishes — and narrowly. "it compiles" is not "it works", and a ' +
+        'build that type-checks nothing must not claim to type-check',
+    ),
+  greenOnBase: z
+    .boolean()
+    .describe(
+      'Whether it passes right now on the base branch, before any change. Run it and find out. ' +
+        'A repository with long-red lint is ordinary, and pretending otherwise produces a gate ' +
+        'nothing can satisfy',
+    ),
+});
+export type SurveyCheck = z.infer<typeof SurveyCheckSchema>;
+
+/**
+ * How this repository builds and verifies itself, derived rather than declared.
+ *
+ * The platform must know nothing about any ecosystem — not npm, not cargo, not
+ * go — and an operator must not have to maintain facts about a repository that
+ * change without telling them. `--checks` was that: a hand-authored per-repo
+ * fact, which `docs/STATE.md` called "the one thing you must get right per
+ * repo", and which we got wrong on the only repository we tried it on.
+ *
+ * So the planner reports what it found. It already does the work — it reads the
+ * manifest, installs, and runs whatever the project has — and used to throw the
+ * findings away.
+ */
+export const RepoSurveySchema = z.object({
+  install: z
+    .string()
+    .max(500)
+    .optional()
+    .describe('How dependencies are installed, if this repository has any'),
+  checks: z
+    .array(SurveyCheckSchema)
+    .max(10)
+    .describe(
+      'Every command this repository has for verifying itself. An empty list is a legitimate ' +
+        'and useful answer: it says nobody can be told the change is safe by running something',
+    ),
+  readFiles: z
+    .array(RepoPath)
+    .max(50)
+    .describe(
+      'The files you read to work this out. They are hashed, so the survey can be re-derived ' +
+        'when they change rather than going quietly stale',
+    ),
+});
+export type RepoSurvey = z.infer<typeof RepoSurveySchema>;
+
+/**
+ * The gate a surveyed repository can actually hold itself to.
+ *
+ * Only the checks that were green on the base. A check already failing cannot
+ * be a gate — demanding green from a project whose lint has been red for a year
+ * produces a gate nothing can ever pass, which is how a run ends up looping to
+ * its cap on something no edit could fix.
+ *
+ * An empty result is meaningful and must not be papered over: it says this
+ * repository has nothing that can tell you the change is safe, so the reviewer's
+ * judgement is the only check there is. The caller should say so out loud.
+ */
+export function gateFromSurvey(survey: RepoSurvey | undefined): readonly string[] {
+  const green = (survey?.checks ?? []).filter((c) => c.greenOnBase).map((c) => c.command);
+  return green.length === 0 ? [] : ['sh', '-c', green.join(' && ')];
+}
+
+/**
  * What a planner is asked to produce.
  *
  * Deliberately excludes the author and the cost, for the same reason the
@@ -92,6 +188,11 @@ export const PlanInputSchema = z.object({
     .array(z.string().min(1).max(1000))
     .default([])
     .describe('Anything the request does not settle. Ask rather than decide it yourself'),
+  survey: RepoSurveySchema.describe(
+    'How this repository builds and verifies itself, as you found it. Required: you ran these ' +
+      'commands to understand the repository anyway, and nothing downstream can discover them ' +
+      'for itself',
+  ),
 });
 export type PlanInput = z.infer<typeof PlanInputSchema>;
 
