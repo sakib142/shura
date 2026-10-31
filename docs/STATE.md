@@ -122,16 +122,31 @@ and `backend-developer` had **identical grants**, `backend-developer`'s prompt
 contained nothing backend-specific, and backend could neither plan nor review.
 
 The test for whether something deserves its own role is **grants, not subject
-matter**. `backlog-author` holds `[tracker.read, docs.read, backlog.propose]`
-and cannot touch a repository, so it stays separate. Frontend and backend
-builders had the same grants, so they merged.
+matter**. Frontend and backend builders had the same grants, so they merged.
 
-### Still outside that model
+### What was removed, on 31 October
 
-`backlog-author`, `backlog-reviewer`, `design-analyst` work on tickets and
-designs rather than code. `merge-queue` is `kind: admit` — deterministic code
-carrying no model, by rule 3. **None has run on the CLI path.** Parked, not
-abandoned.
+Four roles shipped that had never run against a repository — `backlog-author`,
+`backlog-reviewer`, `design-analyst` and `merge-queue` — along with the flows
+built to drive them: the `design` command, `design-to-backlog.ts`, the Figma
+port and connector, `shura submit`, and the `target-ui` fixture.
+`design-to-backlog.ts` had no tests at all.
+
+They were parked for weeks and the parking had a cost: untested code in the
+tree reads as capability, and every one of them had to be explained to anybody
+reading the role list. A foundation has to be small enough to be strong.
+
+`merge-queue` going needs one note. It was the only `admit` actor, so rule 3
+has no shipped role to point at any more — but the property is unchanged and
+still enforced where it counts: `parseRole` rejects an admit role carrying a
+model, and the database refuses the row (`admit_actors_carry_no_model`). The
+merge commit's git identity in `shura run` is a hardcoded
+`agentIdentity('merge-queue', 'admit', 'deterministic')` in the connectors, not
+a role lookup, so that path still works.
+
+Kept deliberately, because tests cover them: `shura run`, the `MergeQueue` port
+with both implementations, `admit` in the vocabulary, and `shura probe` — which
+`LocalVcs` exists for.
 
 ### The four rules
 
@@ -175,7 +190,7 @@ metered API. `describeSpend` renders it as `of quota, not billed
 - **`shura probe`** since being rewired onto `reviewBranch`. It measures catch
   rate against seeded faults and is how you would know whether the reviewer is
   genuinely good or merely agreeable.
-- **The non-code agents** — backlog, design.
+- ~~The non-code agents~~ — removed on 31 October rather than left parked.
 
 ---
 
@@ -243,5 +258,5 @@ found them.
 4. **Prompt caching on the codex side** — the claude side has it; codex usage
    showed 30k of 36k tokens served from cache already, so check before
    building.
-5. **Decide about the non-code agents** — fold in, or delete. They have never
-   run on this path and are currently dead weight in `loadAllRoles()`.
+5. ~~**Decide about the non-code agents**~~ — done on 31 October: deleted.
+   `loadAllRoles()` now returns exactly `planner`, `builder` and `reviewer`.

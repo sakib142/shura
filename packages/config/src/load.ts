@@ -137,7 +137,6 @@ export function missingCredentials(config: ForgeConfig): MissingCredential[] {
     need(config.tracker.emailEnv, 'Jira');
     need(config.tracker.tokenEnv, 'Jira');
   }
-  if (config.design.type === 'figma') need(config.design.tokenEnv, 'Figma');
 
   for (const agent of Object.values(config.agents)) {
     const envVar = VENDOR_KEY_ENV[agent.runtime];

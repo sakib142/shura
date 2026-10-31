@@ -106,8 +106,8 @@ original request — a reviewer with two standards has none.
 ### The reviewer may fix what it finds, and rule 2 still holds
 
 A reviewer that can only report sends trivial defects back for a whole rework
-cycle. So `frontend-reviewer` may correct what it found — without a verifier
-ever holding a write grant.
+cycle. So `reviewer` may correct what it found — without a verifier ever
+holding a write grant.
 
 While reviewing, it holds `repo.read`, `test.run` and the verdict, and the
 gateway denies it anything else. When it asks to fix, a **separate task of kind
@@ -239,10 +239,9 @@ criteria are what the reviewer judges against, so they are the actual input to
 quality — vague criteria produce a vague verdict, and no amount of model
 capability fixes that.
 
-You can write them yourself (`shura submit`, `shura run`), or let the planner
-derive them from free-form instructions and approve what it came up with
-(`shura build`). Either way they are fixed before any code is written, and the
-reviewer judges against those and nothing else.
+The planner derives them from your free-form instructions and you approve what
+it came up with (`shura build`). They are fixed before any code is written, and
+the reviewer judges against those and nothing else.
 
 ```
 Given a status filter, when orders are listed,

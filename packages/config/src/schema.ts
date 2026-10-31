@@ -53,15 +53,6 @@ export const TrackerConfigSchema = z.discriminatedUnion('type', [
 ]);
 export type TrackerConfig = z.infer<typeof TrackerConfigSchema>;
 
-export const DesignConfigSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('none') }),
-  z.object({
-    type: z.literal('figma'),
-    fileKey: z.string().min(1),
-    tokenEnv: z.string().min(1).default('FIGMA_TOKEN'),
-  }),
-]);
-
 export const AgentConfigSchema = z.object({
   runtime: z.enum(VENDORS),
   model: z.string().min(1),
@@ -84,7 +75,6 @@ export const ForgeConfigSchema = z.object({
   project: z.string().min(1),
   repo: RepoConfigSchema,
   tracker: TrackerConfigSchema.default({ type: 'local' }),
-  design: DesignConfigSchema.default({ type: 'none' }),
   /** Role id -> which model runs it. Overrides the shipped role defaults. */
   agents: z.record(z.string(), AgentConfigSchema).default({}),
   budgets: BudgetsSchema.default({}),
