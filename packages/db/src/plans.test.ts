@@ -34,8 +34,9 @@ const submission: PlanSubmission = {
         command: 'npm run build',
         proves: 'it bundles; it does not type-check, because tsconfig.json has files: []',
         greenOnBase: true,
+        usableAsGate: true,
       },
-      { name: 'lint', command: 'npm run lint', proves: 'style rules hold', greenOnBase: false },
+      { name: 'lint', command: 'npm run lint', proves: 'style rules hold', greenOnBase: false, usableAsGate: true },
     ],
     readFiles: ['package.json', 'tsconfig.json'],
   },
@@ -227,7 +228,7 @@ d('the plan gate', () => {
         survey: {
           install: 'npm ci',
           checks: [
-            { name: 'build', command: 'npm run build', proves: 'it bundles', greenOnBase: true },
+            { name: 'build', command: 'npm run build', proves: 'it bundles', greenOnBase: true, usableAsGate: true },
           ],
           readFiles: ['package.json'],
         },
@@ -262,7 +263,7 @@ d('the plan gate', () => {
         survey: {
           install: 'npm ci',
           checks: [
-            { name: 'build', command: 'npm run build', proves: 'it bundles', greenOnBase: true },
+            { name: 'build', command: 'npm run build', proves: 'it bundles', greenOnBase: true, usableAsGate: true },
           ],
           readFiles: ['package.json'],
         },

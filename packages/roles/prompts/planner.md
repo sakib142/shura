@@ -108,6 +108,22 @@ completely ordinary, and a gate that demands green there can never be met. What
 matters downstream is that nothing gets *worse*, and that is only expressible if
 you know what was already failing.
 
+**`usableAsGate` — whether a machine can run this unattended and learn
+something.** Say false when it needs a person or a browser; when it needs a
+server running; when it needs configuration the repository deliberately does not
+contain; when it leaves a process behind; or when it passes without asserting
+anything.
+
+That last one catches people out. A test command in a repository with no test
+project exits 0 and has proved nothing — it is `usableAsGate: false`, however
+green it looks. So is anything shaped like `start the app & curl it`: the shell
+backgrounds the wrong half, the request races the server, and the process
+outlives the check.
+
+Report those checks anyway. The most valuable check in a repository is often the
+one only a human can run, and saying so is useful. Just do not let it be
+mistaken for a gate.
+
 An empty `checks` list is a legitimate answer, and an important one: it says
 nobody can be told this change is safe by running something. Say that plainly
 rather than inventing a command that does not exist.

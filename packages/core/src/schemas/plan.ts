@@ -96,6 +96,15 @@ export const SurveyCheckSchema = z.object({
         'A repository with long-red lint is ordinary, and pretending otherwise produces a gate ' +
         'nothing can satisfy',
     ),
+  usableAsGate: z
+    .boolean()
+    .describe(
+      'Whether a machine can run this unattended and learn something from the result. False if ' +
+        'it needs a person, a browser or a running server; if it needs configuration the ' +
+        'repository does not contain; if it leaves a process behind; or if it passes without ' +
+        'asserting anything. A suite with no tests exits 0 and proves nothing — that is false, ' +
+        'not true',
+    ),
 });
 export type SurveyCheck = z.infer<typeof SurveyCheckSchema>;
 
@@ -138,18 +147,34 @@ export type RepoSurvey = z.infer<typeof RepoSurveySchema>;
 /**
  * The gate a surveyed repository can actually hold itself to.
  *
- * Only the checks that were green on the base. A check already failing cannot
- * be a gate — demanding green from a project whose lint has been red for a year
- * produces a gate nothing can ever pass, which is how a run ends up looping to
- * its cap on something no edit could fix.
+ * Two conditions, and green is only the first. A check already failing cannot be
+ * a gate — demanding green from a project whose lint has been red for a year
+ * produces a gate nothing can ever pass, which is how a run loops to its cap on
+ * something no edit could fix.
  *
- * An empty result is meaningful and must not be papered over: it says this
- * repository has nothing that can tell you the change is safe, so the reviewer's
- * judgement is the only check there is. The caller should say so out loud.
+ * The second condition was learned from a real survey. Pointed at a C# API, the
+ * planner found three green checks and this function would have strung all
+ * three together:
+ *
+ *   dotnet build … && dotnet test … && dotnet run --project … & curl localhost
+ *
+ * `dotnet test` was green and vacuous — the planner said so in as many words,
+ * "exits 0 having discovered and run zero tests" — and the third starts a
+ * server, needs configuration the repository deliberately does not contain, and
+ * leaves a process behind; the `&` would have backgrounded everything before it
+ * and curled a port nothing was listening on yet. All three facts were in the
+ * survey as prose, which no amount of code can read. So the planner states
+ * `usableAsGate` and this trusts it.
+ *
+ * An empty result is meaningful and must not be papered over: it says nothing
+ * here can tell you the change is safe, so the reviewer's judgement is the only
+ * check there is. The caller should say so out loud.
  */
 export function gateFromSurvey(survey: RepoSurvey | undefined): readonly string[] {
-  const green = (survey?.checks ?? []).filter((c) => c.greenOnBase).map((c) => c.command);
-  return green.length === 0 ? [] : ['sh', '-c', green.join(' && ')];
+  const usable = (survey?.checks ?? [])
+    .filter((c) => c.greenOnBase && c.usableAsGate)
+    .map((c) => c.command);
+  return usable.length === 0 ? [] : ['sh', '-c', usable.join(' && ')];
 }
 
 /**

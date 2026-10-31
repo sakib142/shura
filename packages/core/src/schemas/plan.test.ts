@@ -13,7 +13,7 @@ const plan = {
   survey: {
     install: 'pnpm install',
     checks: [
-      { name: 'tests', command: 'pnpm test', proves: 'the suite passes', greenOnBase: true },
+      { name: 'tests', command: 'pnpm test', proves: 'the suite passes', greenOnBase: true, usableAsGate: true },
     ],
     readFiles: ['package.json'],
   },
@@ -123,6 +123,7 @@ describe('deriving a gate from what the repository said about itself', () => {
     command: 'npm run build',
     proves: 'it bundles',
     greenOnBase: true,
+    usableAsGate: true,
     ...over,
   });
 
@@ -158,6 +159,63 @@ describe('deriving a gate from what the repository said about itself', () => {
     expect(gateFromSurvey({ checks: [check({ greenOnBase: false })], readFiles: [] })).toEqual([]);
     expect(gateFromSurvey({ checks: [], readFiles: [] })).toEqual([]);
     expect(gateFromSurvey(undefined)).toEqual([]);
+  });
+
+  /*
+   * Green is not enough, and this is not hypothetical. Pointed at a C# API the
+   * planner found three green checks:
+   *
+   *   dotnet build …            real
+   *   dotnet test …             "exits 0 having discovered and run zero tests"
+   *   dotnet run … & curl …     starts a server, needs gitignored config
+   *
+   * Stringing all three together with && would have backgrounded everything
+   * before the `&`, curled a port nothing was listening on, and left a dotnet
+   * process behind — while citing a suite with no tests as evidence. Every one
+   * of those facts was in the survey as prose that no code can read, so the
+   * planner states it and this trusts it.
+   */
+  it('leaves out a check that passes without asserting anything', () => {
+    expect(
+      gateFromSurvey({
+        checks: [
+          check(),
+          check({
+            name: 'unit tests',
+            command: 'dotnet test App.sln',
+            proves: 'nothing: there is no test project',
+            usableAsGate: false,
+          }),
+        ],
+        readFiles: [],
+      }),
+    ).toEqual(['sh', '-c', 'npm run build']);
+  });
+
+  it('leaves out a check that needs a server, a person or config it cannot have', () => {
+    expect(
+      gateFromSurvey({
+        checks: [
+          check(),
+          check({
+            name: 'manual endpoint check',
+            command: 'dotnet run --project App.csproj & curl -s localhost:5000/api/health',
+            proves: 'the only check that exercises the change',
+            usableAsGate: false,
+          }),
+        ],
+        readFiles: [],
+      }),
+    ).toEqual(['sh', '-c', 'npm run build']);
+  });
+
+  // The most valuable check in a repository can be the one a machine cannot
+  // run. That makes the gate empty, which the caller must say out loud rather
+  // than quietly publishing.
+  it('gives no gate when the only usable checks are unusable', () => {
+    expect(
+      gateFromSurvey({ checks: [check({ usableAsGate: false })], readFiles: [] }),
+    ).toEqual([]);
   });
 });
 

@@ -599,9 +599,19 @@ export function renderPlan(p: StoredPlan): string {
       );
     }
     for (const c of p.survey.checks) {
+      // Why a check is not in the gate matters as much as the gate itself: a
+      // green one left out looks like an oversight unless the reason is shown.
+      const standing = !c.greenOnBase
+        ? 'RED  '
+        : c.usableAsGate
+          ? 'gate '
+          : 'green';
       lines.push(
-        `  ${c.greenOnBase ? 'green' : 'RED  '}  ${c.name}: ${c.command}`,
+        `  ${standing}  ${c.name}: ${c.command}`,
         `         proves: ${c.proves}`,
+        ...(c.greenOnBase && !c.usableAsGate
+          ? ['         not a gate: nothing automatic can learn from it passing']
+          : []),
       );
     }
     if (p.survey.checks.some((c) => !c.greenOnBase)) {
