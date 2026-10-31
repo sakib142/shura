@@ -61,6 +61,7 @@ import { PgAuditSink, PgClaims, PgEffectStore, PgPlans, type StoredPlan } from '
 import { McpToolGateway, resolveGrants, type ToolHandler } from '@shura/tool-gateway';
 import { fixerHandlers, producerHandlers, verifierHandlers } from './handlers.js';
 import { drive, limitsOf, modelOf } from './drive.js';
+import { installDependencies } from './prepare.js';
 import { recorder, type StreamEvent } from './stream.js';
 
 /** What GitHub can do beyond the port, when the run is on GitHub. */
@@ -245,6 +246,11 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
       identity: agentIdentity(req.builder.name, req.builder.role.id, modelOf(req.builder.role)),
       claimedBranches: [branch],
     });
+
+    // Before the agent, not by the agent: a builder that installs for itself
+    // pays for it out of its own pass, every attempt.
+    const ready = await installDependencies(wt, plan.survey?.install);
+    if (ready.summary !== undefined) emit({ kind: 'note', text: ready.summary });
 
     let checks: { ok: boolean; summary: string; output: string };
     try {
@@ -476,6 +482,7 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
     });
 
     const review = await reviewBranch({
+      ...(plan.survey?.install === undefined ? {} : { install: plan.survey.install }),
       pool: req.pool,
       repoDir: req.repoDir,
       checkCommand: req.checkCommand,
@@ -773,6 +780,16 @@ export interface ReviewArgs {
   readonly pool: Pool;
   readonly repoDir: string;
   readonly checkCommand: readonly string[];
+  /**
+   * How to install this repository's dependencies, from the plan's survey.
+   *
+   * Flat, like everything else here, and optional because a review can be run
+   * on its own against a branch with no plan behind it. When it is present the
+   * worktree is prepared before the reviewer sees it — a verify task holds no
+   * write grant and cannot install anything itself, which is how a reviewer
+   * ends up reporting that it lacks the tools to judge a criterion.
+   */
+  readonly install?: string;
   readonly reviewer: {
     readonly runtime: AgentRuntime;
     readonly role: RoleDefinition;
@@ -813,6 +830,19 @@ export async function reviewBranch(
     // would block the builder's own rework of it.
     detached: true,
   });
+
+  /*
+   * The one that matters most.
+   *
+   * A verify task holds no write grant and runs under an operating-system
+   * sandbox, so it cannot install anything for itself. On 30 October that meant
+   * a reviewer reporting "this review checkout also lacks node_modules/.bin/tsc
+   * and node_modules/.bin/eslint" and marking a criterion unmet for want of the
+   * tools — a finding no producer could act on, which then bought a builder
+   * pass that wrote nothing.
+   */
+  const ready = await installDependencies(wt, a.install);
+  if (ready.summary !== undefined) a.emit({ kind: 'note', text: ready.summary });
 
   let verdict: AcceptedVerdict | undefined;
   let spend = { tokensIn: 0, tokensOut: 0, usd: 0 };
@@ -1037,6 +1067,12 @@ async function applyReviewerFix(a: FixArgs): Promise<FixResult> {
     identity: agentIdentity(req.reviewer.name, req.reviewer.role.id, modelOf(req.reviewer.role)),
     claimedBranches: [a.branch],
   });
+
+  // A fix task can install for itself, and on forge-sandbox one spent about
+  // forty seconds failing to — `npm install --offline`, then
+  // `--no-package-lock`, then `--fetch-retries=0` — before giving up.
+  const ready = await installDependencies(wt, req.plan.survey?.install);
+  if (ready.summary !== undefined) a.emit({ kind: 'note', text: ready.summary });
 
   let usd = 0;
   let summary: string | undefined;
