@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Git, agentIdentity } from '@shura/git';
 import { Worktree } from '@shura/sandbox';
-import { installDependencies } from './prepare.js';
+import { installDependencies, measureBaseline, wasAlreadyFailing } from './prepare.js';
 
 let repoDir: string;
 const made: Worktree[] = [];
@@ -92,5 +92,86 @@ describe('preparing a worktree', () => {
     await expect(installDependencies(wt, 'this-command-does-not-exist')).resolves.toMatchObject({
       ok: false,
     });
+  });
+});
+
+/*
+ * Measuring the base before anything is built.
+ *
+ * Criterion [19] demanded "no new error relative to a captured baseline" when
+ * nothing captured one. No agent could settle it — a verify task cannot install
+ * the tools it would need — so it went round the loop twice and ended with the
+ * reviewer committing a verification note into the user's own repository.
+ *
+ * The measurement is deterministic, so it belongs to the harness and not to
+ * anybody's judgement.
+ */
+describe('measuring the base', () => {
+  it('records what the gate said, with the commit it said it about', async () => {
+    const base = await measureBaseline({
+      repoDir,
+      base: 'main',
+      taskId: 'baseline-ok',
+      gate: ['sh', '-c', 'echo all good'],
+    });
+
+    expect(base?.code).toBe(0);
+    expect(base?.output).toContain('all good');
+    expect(base?.command).toEqual(['sh', '-c', 'echo all good']);
+    expect(base?.sha).toMatch(/^[0-9a-f]{40}$/);
+    expect(base?.at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  // The case that matters: a repository whose gate is already red. Recording it
+  // is what lets a builder be told the failure is not its own.
+  it('records a gate that was already failing, rather than treating it as an error', async () => {
+    const base = await measureBaseline({
+      repoDir,
+      base: 'main',
+      taskId: 'baseline-red',
+      gate: ['sh', '-c', 'echo broken already >&2; exit 2'],
+    });
+
+    expect(base?.code).toBe(2);
+    expect(base?.output).toContain('broken already');
+    expect(wasAlreadyFailing(base)).toBe(true);
+  });
+
+  it('runs the install first, so the gate has what it needs', async () => {
+    const base = await measureBaseline({
+      repoDir,
+      base: 'main',
+      taskId: 'baseline-install',
+      install: 'echo installed > dep.marker',
+      gate: ['sh', '-c', 'cat dep.marker'],
+    });
+
+    expect(base?.code).toBe(0);
+    expect(base?.output).toContain('installed');
+  });
+
+  it('measures nothing when there is no gate to run', async () => {
+    expect(
+      await measureBaseline({ repoDir, base: 'main', taskId: 'baseline-none', gate: [] }),
+    ).toBeUndefined();
+  });
+
+  // An unmeasured baseline must not read as "the base was fine", or the first
+  // red gate gets blamed on whatever change happens to be in flight.
+  it('does not claim the base was passing when nothing was measured', () => {
+    expect(wasAlreadyFailing(undefined)).toBe(false);
+  });
+
+  // It must leave the base branch free: the builder's own branch is created
+  // from it, and a held worktree would block that.
+  it('leaves no worktree holding the base branch', async () => {
+    await measureBaseline({
+      repoDir,
+      base: 'main',
+      taskId: 'baseline-release',
+      gate: ['sh', '-c', 'true'],
+    });
+    const list = await new Git(repoDir).tryRun('worktree', 'list');
+    expect(list.stdout).not.toContain('baseline-release');
   });
 });

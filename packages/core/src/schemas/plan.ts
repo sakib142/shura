@@ -145,6 +145,35 @@ export const RepoSurveySchema = z.object({
 export type RepoSurvey = z.infer<typeof RepoSurveySchema>;
 
 /**
+ * What the project's own checks said about the base, before anything changed.
+ *
+ * Not model-produced: deterministic code runs the gate on the base branch once
+ * per plan and keeps the result. That makes two questions answerable that were
+ * not before.
+ *
+ * "Did this change break the checks, or were they already broken?" A builder
+ * was once handed a failing check it had not caused. Being able to say "this was
+ * failing before you touched it" is the difference between a rework and an
+ * explanation.
+ *
+ * And "is there anything new here?" Criterion [19] on 30 October demanded no new
+ * error relative to a captured baseline, when nothing captured one — so no agent
+ * could settle it, and the attempt to ended with a reviewer committing a
+ * verification note into the user's own repository. The comparison belongs to
+ * the harness, which can simply subtract.
+ */
+export interface Baseline {
+  /** Exactly what was run, so a later comparison is like for like. */
+  readonly command: readonly string[];
+  readonly code: number;
+  readonly output: string;
+  /** ISO, so a stale baseline is visible rather than assumed fresh. */
+  readonly at: string;
+  /** The base commit it was measured at. */
+  readonly sha: string;
+}
+
+/**
  * The gate a surveyed repository can actually hold itself to.
  *
  * Two conditions, and green is only the first. A check already failing cannot be

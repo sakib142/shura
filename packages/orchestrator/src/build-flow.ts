@@ -42,6 +42,7 @@ import {
   type AcceptedVerdict,
   type ActorIdentity,
   type ArtifactState,
+  type Baseline,
   type Decision,
   type Finding,
   type RoleDefinition,
@@ -61,7 +62,7 @@ import { PgAuditSink, PgClaims, PgEffectStore, PgPlans, type StoredPlan } from '
 import { McpToolGateway, resolveGrants, type ToolHandler } from '@shura/tool-gateway';
 import { fixerHandlers, producerHandlers, verifierHandlers } from './handlers.js';
 import { drive, limitsOf, modelOf } from './drive.js';
-import { installDependencies } from './prepare.js';
+import { installDependencies, measureBaseline, wasAlreadyFailing } from './prepare.js';
 import { recorder, type StreamEvent } from './stream.js';
 
 /** What GitHub can do beyond the port, when the run is on GitHub. */
@@ -201,6 +202,42 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
   await plans.building(plan.id, branch);
   await move('in_progress');
 
+  /*
+   * What the gate says about the base, measured once before anything is built.
+   *
+   * Deterministic and cheap — one check run, no model — and it buys two things.
+   * A builder handed a failing check can be told whether it caused it, instead
+   * of being sent back to fix something that was already broken. And the
+   * reviewer is given the before-state rather than having to establish it, which
+   * it cannot do: a verify task runs read-only and that is exactly how criterion
+   * [19] became unanswerable.
+   *
+   * Reused when the plan already has one, because a baseline measures a commit:
+   * re-measuring the same base would either agree or mean the machine changed
+   * underneath, and silently replacing it would hide the second case.
+   */
+  let baseline = plan.baseline;
+  if (baseline === undefined && req.checkCommand.length > 0) {
+    emit({ kind: 'note', text: `measuring ${base} before building, so nothing is blamed twice` });
+    baseline = await measureBaseline({
+      repoDir: req.repoDir,
+      base,
+      taskId: `baseline-${plan.id.slice(0, 8)}`,
+      ...(plan.survey?.install === undefined ? {} : { install: plan.survey.install }),
+      gate: req.checkCommand,
+    });
+    if (baseline !== undefined) {
+      await new PgPlans(req.pool).measured(plan.id, baseline).catch(() => {});
+      emit({
+        kind: 'note',
+        text: wasAlreadyFailing(baseline)
+          ? `the gate already fails on ${base} (exit ${baseline.code}) — this change is not ` +
+            'responsible for that, and will not be sent back for it'
+          : `the gate passes on ${base}, so a failure after this change is this change`,
+      });
+    }
+  }
+
   for (let attempt = 1; attempt <= cap; attempt++) {
     /* ------------------------------------------------------------- build */
     state = attempt === 1 ? transition(state, 'start_production') : transition(state, 'rework_start');
@@ -330,6 +367,7 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
             attempt,
             ...(priorFindings.length === 0 ? {} : { priorFindings }),
             ...(buildFailure === undefined ? {} : { buildFailure }),
+            ...(baseline === undefined ? {} : { baseline }),
           },
           tools: req.builder.role.tools,
           limits: limitsOf(req.builder.role),
@@ -386,9 +424,16 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
         priorFindings = [];
         priorFindingList = [];
         await finishTask(req.pool, buildTaskId, 'failed');
+        // A check that was red before this change is not evidence against it.
+        // Sending it back anyway is how a producer spends its attempts on
+        // somebody else's failure.
         emit({
           kind: 'note',
-          text: `not publishing: ${checks.summary}. Sending it back to ${req.builder.name}.`,
+          text: wasAlreadyFailing(baseline)
+            ? `not publishing: ${checks.summary} — and it was already failing on ${base} ` +
+              `(exit ${baseline?.code}). Sending it back to ${req.builder.name} with that said, ` +
+              'so it fixes its own work rather than the baseline.'
+            : `not publishing: ${checks.summary}. Sending it back to ${req.builder.name}.`,
         });
         continue;
       }
@@ -483,6 +528,7 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
 
     const review = await reviewBranch({
       ...(plan.survey?.install === undefined ? {} : { install: plan.survey.install }),
+      ...(baseline === undefined ? {} : { baseline }),
       pool: req.pool,
       repoDir: req.repoDir,
       checkCommand: req.checkCommand,
@@ -790,6 +836,15 @@ export interface ReviewArgs {
    * ends up reporting that it lacks the tools to judge a criterion.
    */
   readonly install?: string;
+  /**
+   * What the gate said about the base, when it has been measured.
+   *
+   * The reviewer is handed this rather than asked to find it. Asking is how
+   * criterion [19] became unanswerable: a verify task cannot install the tools
+   * it would need, so "I could not establish the before-state" was the only
+   * honest answer available to it.
+   */
+  readonly baseline?: Baseline;
   readonly reviewer: {
     readonly runtime: AgentRuntime;
     readonly role: RoleDefinition;
@@ -883,6 +938,8 @@ export async function reviewBranch(
         attempt: a.attempt,
         diff: a.diff,
         checkResults: { ok: a.checks.ok, summary: a.checks.summary, output: a.checks.output },
+        // The before-state, handed over rather than asked for.
+        ...(a.baseline === undefined ? {} : { baseline: a.baseline }),
         // The reviewer sees the plan so it can catch work the plan said was out
         // of scope. It does not see the original request: the criteria are the
         // standard, and a reviewer with two standards has none.

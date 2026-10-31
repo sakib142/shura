@@ -8,6 +8,7 @@
 
 import type { Pool } from 'pg';
 import type {
+  Baseline,
   PlanInput,
   PlanStatus,
   PlanSubmission,
@@ -55,6 +56,8 @@ export interface StoredPlan {
   readonly answers: readonly string[];
   /** Absent on plans recorded before the survey existed. */
   readonly survey?: RepoSurvey;
+  /** Absent until the gate has been measured on the base, or if there is none. */
+  readonly baseline?: Baseline;
   readonly author: string;
   readonly vendor: Vendor;
   readonly model: string;
@@ -83,6 +86,7 @@ interface Row {
   criteria: string[];
   open_questions: string[];
   survey: RepoSurvey | null;
+  baseline: Baseline | null;
   answers: string[];
   author: string;
   vendor: Vendor;
@@ -97,7 +101,8 @@ interface Row {
 const SELECT = `
   SELECT p.id, p.work_item_id, w.key, w.title, p.task_id, p.repo, p.request, p.source,
          p.base, p.checks, p.understanding, p.approach, p.files, p.out_of_scope, p.criteria,
-         p.open_questions, p.answers, p.survey, p.author, p.vendor, p.model, p.cost_usd, p.status,
+         p.open_questions, p.answers, p.survey, p.baseline, p.author, p.vendor, p.model,
+         p.cost_usd, p.status,
          p.branch, p.change_request, p.created_at
     FROM plans p JOIN work_items w ON w.id = p.work_item_id`;
 
@@ -120,6 +125,7 @@ function hydrate(r: Row): StoredPlan {
     criteria: r.criteria,
     openQuestions: r.open_questions,
     ...(r.survey === null ? {} : { survey: r.survey }),
+    ...(r.baseline === null ? {} : { baseline: r.baseline }),
     answers: r.answers,
     author: r.author,
     vendor: r.vendor,
@@ -329,6 +335,21 @@ export class PgPlans {
     await this.#pool.query(
       `UPDATE plans SET status = 'built', branch = $2, change_request = $3 WHERE id = $1`,
       [planId, branch, changeRequest ?? null],
+    );
+  }
+
+  /**
+   * Keeps what the gate said about the base, measured once.
+   *
+   * Written outside any transaction and never overwritten once set: a baseline
+   * is a measurement of a commit, so re-measuring the same base would either
+   * agree or indicate the machine changed underneath — and quietly replacing it
+   * would hide that. A plan built twice reuses the first measurement.
+   */
+  async measured(planId: string, baseline: Baseline): Promise<void> {
+    await this.#pool.query(
+      `UPDATE plans SET baseline = $2::jsonb WHERE id = $1 AND baseline IS NULL`,
+      [planId, JSON.stringify(baseline)],
     );
   }
 
