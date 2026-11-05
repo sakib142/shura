@@ -26,6 +26,20 @@ const submission: PlanSubmission = {
     'Given no orders in the range, when it is applied, then an empty state is shown',
   ],
   openQuestions: ['Does the filter persist across a reload?'],
+  survey: {
+    install: 'npm ci',
+    checks: [
+      {
+        name: 'build',
+        command: 'npm run build',
+        proves: 'it bundles; it does not type-check, because tsconfig.json has files: []',
+        greenOnBase: true,
+        usableAsGate: true,
+      },
+      { name: 'lint', command: 'npm run lint', proves: 'style rules hold', greenOnBase: false, usableAsGate: true },
+    ],
+    readFiles: ['package.json', 'tsconfig.json'],
+  },
   author: { agent: 'plan-01', vendor: 'anthropic', model: 'claude-sonnet-5' },
   cost: { tokensIn: 1200, tokensOut: 800, usd: 0.0431 },
 };
@@ -211,6 +225,13 @@ d('the plan gate', () => {
         outOfScope: [],
         criteria: ['Given a signed-in user, when they save, then profiles.bio holds the value'],
         openQuestions: [],
+        survey: {
+          install: 'npm ci',
+          checks: [
+            { name: 'build', command: 'npm run build', proves: 'it bundles', greenOnBase: true, usableAsGate: true },
+          ],
+          readFiles: ['package.json'],
+        },
       },
       { tokensIn: 400, tokensOut: 120, usd: 0.0199 },
       'a-human',
@@ -239,6 +260,13 @@ d('the plan gate', () => {
         outOfScope: [],
         criteria: ['Given a thing, when it happens, then the other thing is true'],
         openQuestions: [],
+        survey: {
+          install: 'npm ci',
+          checks: [
+            { name: 'build', command: 'npm run build', proves: 'it bundles', greenOnBase: true, usableAsGate: true },
+          ],
+          readFiles: ['package.json'],
+        },
       },
       { tokensIn: 1, tokensOut: 1, usd: 0.01 },
       'a-human',

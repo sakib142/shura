@@ -30,6 +30,17 @@ export interface TaskContext {
   readonly lessons?: readonly string[];
   readonly diff?: string;
   readonly checkResults?: unknown;
+  /**
+   * What the project's checks said about the base, before this change.
+   *
+   * Given to a verifier so it never has to establish the before-state itself —
+   * which it cannot: a verify task holds no write grant and runs under an
+   * operating-system sandbox, so on 30 October one reported that it lacked the
+   * tools and marked a criterion unmet for want of them. Also given to a
+   * producer on rework, so a check that was already red is not mistaken for its
+   * own doing.
+   */
+  readonly baseline?: unknown;
   readonly title?: string;
   /**
    * The request as the human wrote it, free-form.

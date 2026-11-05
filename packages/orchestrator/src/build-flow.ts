@@ -28,6 +28,7 @@
  * fix, and it is recorded rather than glossed.
  */
 
+import { createHash } from 'node:crypto';
 import type { Pool } from 'pg';
 import {
   VerdictInputSchema,
@@ -35,12 +36,15 @@ import {
   afterVerdict,
   asJsonSchema,
   fixRoleOf,
+  whoSettles,
   selectVerifier,
   transition,
   type AcceptedVerdict,
   type ActorIdentity,
   type ArtifactState,
+  type Baseline,
   type Decision,
+  type Finding,
   type RoleDefinition,
   type ToolName,
   type VerifierCandidate,
@@ -58,12 +62,20 @@ import { PgAuditSink, PgClaims, PgEffectStore, PgPlans, type StoredPlan } from '
 import { McpToolGateway, resolveGrants, type ToolHandler } from '@shura/tool-gateway';
 import { fixerHandlers, producerHandlers, verifierHandlers } from './handlers.js';
 import { drive, limitsOf, modelOf } from './drive.js';
+import { installDependencies, measureBaseline, wasAlreadyFailing } from './prepare.js';
 import { recorder, type StreamEvent } from './stream.js';
 
 /** What GitHub can do beyond the port, when the run is on GitHub. */
 export interface PullRequestSurface {
   postVerdict?(ref: ChangeRequestRef, body: string, approved: boolean): Promise<void>;
-  urlOf?(ref: ChangeRequestRef): Promise<string>;
+  /**
+   * Where the change request can be read, when the host can say.
+   *
+   * Optional in both senses: a host may not offer one, and an adapter that does
+   * may still fail to read it. The caller already treats absence as "no link to
+   * print", so the type says so rather than making every adapter pretend.
+   */
+  urlOf?(ref: ChangeRequestRef): Promise<string | undefined>;
 }
 
 export interface BuildRequest {
@@ -171,11 +183,60 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
   let state: ArtifactState = 'draft';
   let usd = 0;
   let priorFindings: unknown[] = [];
+  // The same findings as themselves rather than as prompt material, so the
+  // platform can ask who is able to settle them before it spawns anybody.
+  let priorFindingList: Finding[] = [];
+  /** Producer passes already bought, so none is bought twice. */
+  const bought = new Set<string>();
+  /**
+   * The producer has already been asked this and did not settle it.
+   *
+   * Not a judgement on the builder: it usually means the finding was never
+   * something an edit could fix. Either way, asking again is the one thing
+   * guaranteed not to help, so the finding goes to whoever else can act.
+   */
+  let producerDeclined = false;
   let buildFailure: string | undefined;
   let reviewerFixed = false;
 
   await plans.building(plan.id, branch);
   await move('in_progress');
+
+  /*
+   * What the gate says about the base, measured once before anything is built.
+   *
+   * Deterministic and cheap — one check run, no model — and it buys two things.
+   * A builder handed a failing check can be told whether it caused it, instead
+   * of being sent back to fix something that was already broken. And the
+   * reviewer is given the before-state rather than having to establish it, which
+   * it cannot do: a verify task runs read-only and that is exactly how criterion
+   * [19] became unanswerable.
+   *
+   * Reused when the plan already has one, because a baseline measures a commit:
+   * re-measuring the same base would either agree or mean the machine changed
+   * underneath, and silently replacing it would hide the second case.
+   */
+  let baseline = plan.baseline;
+  if (baseline === undefined && req.checkCommand.length > 0) {
+    emit({ kind: 'note', text: `measuring ${base} before building, so nothing is blamed twice` });
+    baseline = await measureBaseline({
+      repoDir: req.repoDir,
+      base,
+      taskId: `baseline-${plan.id.slice(0, 8)}`,
+      ...(plan.survey?.install === undefined ? {} : { install: plan.survey.install }),
+      gate: req.checkCommand,
+    });
+    if (baseline !== undefined) {
+      await new PgPlans(req.pool).measured(plan.id, baseline).catch(() => {});
+      emit({
+        kind: 'note',
+        text: wasAlreadyFailing(baseline)
+          ? `the gate already fails on ${base} (exit ${baseline.code}) — this change is not ` +
+            'responsible for that, and will not be sent back for it'
+          : `the gate passes on ${base}, so a failure after this change is this change`,
+      });
+    }
+  }
 
   for (let attempt = 1; attempt <= cap; attempt++) {
     /* ------------------------------------------------------------- build */
@@ -187,6 +248,18 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
     });
 
     const buildTaskId = await createTask(req.pool, plan.workItemId, 'produce', req.builder.role.id, attempt);
+    /*
+     * Whether this attempt actually ran a producer.
+     *
+     * The task row has to exist before the pre-flight can decide, because the
+     * worktree the pre-flight reads and the claim it takes are both keyed on a
+     * task id. So the row is honest about its outcome instead: a producer that
+     * was never needed finishes `cancelled`, not `succeeded`. Recording it as
+     * succeeded made a pass that ran nothing indistinguishable from one that
+     * did the work, which is precisely the confusion this phase exists to
+     * remove — and it would have made the saving unmeasurable from the audit.
+     */
+    let spawnedProducer = false;
     const claimed = await claims.acquire({
       agentId: req.builder.name,
       taskId: buildTaskId,
@@ -211,87 +284,131 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
       claimedBranches: [branch],
     });
 
+    // Before the agent, not by the agent: a builder that installs for itself
+    // pays for it out of its own pass, every attempt.
+    const ready = await installDependencies(wt, plan.survey?.install);
+    if (ready.summary !== undefined) emit({ kind: 'note', text: ready.summary });
+
     let checks: { ok: boolean; summary: string; output: string };
     try {
-      const gateway = new McpToolGateway({
-        handlers: producerHandlers({
-          worktree: wt,
-          pool: req.pool,
-          workItemId: plan.workItemId,
-          workItemKey: plan.workItemKey,
-          checkCommand: req.checkCommand,
-          criterionCount: criteria.length,
-          onComment: (body) => emit({ kind: 'note', text: `${req.builder.name}: ${body}` }),
-          claims: {
-            claim: async (_claimBranch, fileGlobs) => {
-              const r = await claims.acquire({
-                agentId: req.builder.name,
-                taskId: buildTaskId,
-                branch,
-                fileGlobs,
-              });
-              return r.granted
-                ? { ok: true as const, expiresAt: r.expiresAt }
-                : { ok: false as const, reason: `${r.reason}; held by ${r.heldBy}` };
+      /*
+       * Is there anything for a builder to do, before one is paid for?
+       *
+       * Two conditions, both cheap to establish: the branch already carries
+       * commits the base does not, and nothing outstanding is a code defect.
+       * When both hold, a builder would read the repository, find the work
+       * already done, write nothing and stop. That is what four of the five
+       * builder passes on 29–30 October did — about 37 of the 44 minutes of
+       * agent time spent on an 89-line change.
+       *
+       * The checks still run below and the clean-worktree path still sends the
+       * branch to review, so skipping the spawn changes what is spent and
+       * nothing else.
+       */
+      const alreadyDone =
+        whatAnEmptyWorktreeMeans(await wt.git.tryRun('rev-list', '--count', `${base}..HEAD`))
+          .send === 'review' && whoSettles(priorFindingList) !== 'producer';
+
+      const head = await wt.git.tryRun('rev-parse', 'HEAD');
+      const key = head.ok ? passKey(head.stdout.trim(), priorFindingList) : undefined;
+      const repeat = key !== undefined && bought.has(key);
+      if (key !== undefined) bought.add(key);
+      if (repeat) producerDeclined = true;
+
+      const nothingToBuild = alreadyDone || repeat;
+
+      if (nothingToBuild) {
+        emit({
+          kind: 'note',
+          text: repeat
+            ? `${req.builder.name} has already been asked this — same commit, same findings — ` +
+              'so asking again would buy the same answer. Taking it to whoever else can act.'
+            : `nothing for ${req.builder.name} to do — ${branch} already carries the work and ` +
+              'no outstanding finding is a code defect, so no build pass is being spent',
+        });
+      } else {
+        spawnedProducer = true;
+        const gateway = new McpToolGateway({
+          handlers: producerHandlers({
+            worktree: wt,
+            pool: req.pool,
+            workItemId: plan.workItemId,
+            workItemKey: plan.workItemKey,
+            checkCommand: req.checkCommand,
+            criterionCount: criteria.length,
+            onComment: (body) => emit({ kind: 'note', text: `${req.builder.name}: ${body}` }),
+            claims: {
+              claim: async (_claimBranch, fileGlobs) => {
+                const r = await claims.acquire({
+                  agentId: req.builder.name,
+                  taskId: buildTaskId,
+                  branch,
+                  fileGlobs,
+                });
+                return r.granted
+                  ? { ok: true as const, expiresAt: r.expiresAt }
+                  : { ok: false as const, reason: `${r.reason}; held by ${r.heldBy}` };
+              },
             },
+          }) as Map<ToolName, ToolHandler>,
+          audit,
+          effects,
+          grantsFor: () => resolveGrants(req.builder.role),
+        });
+
+        const ran = await drive(req.builder.runtime, {
+          role: req.builder.role,
+          context: {
+            workItemKey: plan.workItemKey,
+            title: plan.title,
+            artifactType: 'code_change',
+            acceptanceCriteria: criteria,
+            plan: approvedPlan,
+            attempt,
+            ...(priorFindings.length === 0 ? {} : { priorFindings }),
+            ...(buildFailure === undefined ? {} : { buildFailure }),
+            ...(baseline === undefined ? {} : { baseline }),
           },
-        }) as Map<ToolName, ToolHandler>,
-        audit,
-        effects,
-        grantsFor: () => resolveGrants(req.builder.role),
-      });
+          tools: req.builder.role.tools,
+          limits: limitsOf(req.builder.role),
+          workdir: wt.dir,
+          taskId: buildTaskId,
+          agentId: req.builder.name,
+          kind: 'produce',
+          gateway,
+          emit: (e) => emit({ kind: 'agent', actor: req.builder.name, event: e }),
+        });
+        usd += ran.usd;
 
-      const ran = await drive(req.builder.runtime, {
-        role: req.builder.role,
-        context: {
-          workItemKey: plan.workItemKey,
-          title: plan.title,
-          artifactType: 'code_change',
-          acceptanceCriteria: criteria,
-          plan: approvedPlan,
-          attempt,
-          ...(priorFindings.length === 0 ? {} : { priorFindings }),
-          ...(buildFailure === undefined ? {} : { buildFailure }),
-        },
-        tools: req.builder.role.tools,
-        limits: limitsOf(req.builder.role),
-        workdir: wt.dir,
-        taskId: buildTaskId,
-        agentId: req.builder.name,
-        kind: 'produce',
-        gateway,
-        emit: (e) => emit({ kind: 'agent', actor: req.builder.name, event: e }),
-      });
-      usd += ran.usd;
-
-      // An agent that stopped badly has not finished, and its half-written
-      // change must not be published as though it had.
-      //
-      // This is not hypothetical: a builder hit its spend ceiling partway
-      // through, the checks passed anyway — half a change often does — and a
-      // branch carrying one test file and nothing else was pushed as complete
-      // work. Green checks say "nothing is broken", never "the work is done".
-      if (ran.error !== undefined) {
-        await finishTask(req.pool, buildTaskId, 'failed');
-        emit({ kind: 'note', text: `${req.builder.name} stopped: ${ran.error}` });
-        emit({ kind: 'note', text: 'not publishing a part-written change' });
-        state = transition(state, 'human_requested');
-        await note(
-          `${req.builder.name} stopped before finishing: ${ran.error}\n` +
-            'Nothing was published. The branch is untouched.' +
-            (ran.error.includes('ceiling')
-              ? '\n\nRaise `budgets.per_task_usd` in shura.config.yaml, or narrow the request ' +
-                'so there is less to read.'
-              : ''),
-        );
-        return {
-          state,
-          attempts: attempt,
-          branch,
-          reviewerFixed,
-          reason: ran.error,
-          usd,
-        };
+        // An agent that stopped badly has not finished, and its half-written
+        // change must not be published as though it had.
+        //
+        // This is not hypothetical: a builder hit its spend ceiling partway
+        // through, the checks passed anyway — half a change often does — and a
+        // branch carrying one test file and nothing else was pushed as complete
+        // work. Green checks say "nothing is broken", never "the work is done".
+        if (ran.error !== undefined) {
+          await finishTask(req.pool, buildTaskId, 'failed');
+          emit({ kind: 'note', text: `${req.builder.name} stopped: ${ran.error}` });
+          emit({ kind: 'note', text: 'not publishing a part-written change' });
+          state = transition(state, 'human_requested');
+          await note(
+            `${req.builder.name} stopped before finishing: ${ran.error}\n` +
+              'Nothing was published. The branch is untouched.' +
+              (ran.error.includes('ceiling')
+                ? '\n\nRaise `budgets.per_task_usd` in shura.config.yaml, or narrow the request ' +
+                  'so there is less to read.'
+                : ''),
+          );
+          return {
+            state,
+            attempts: attempt,
+            branch,
+            reviewerFixed,
+            reason: ran.error,
+            usd,
+          };
+        }
       }
 
       // The gate the user asked for: the build is proved green in the same
@@ -305,10 +422,18 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
       if (!checks.ok) {
         buildFailure = checks.output;
         priorFindings = [];
+        priorFindingList = [];
         await finishTask(req.pool, buildTaskId, 'failed');
+        // A check that was red before this change is not evidence against it.
+        // Sending it back anyway is how a producer spends its attempts on
+        // somebody else's failure.
         emit({
           kind: 'note',
-          text: `not publishing: ${checks.summary}. Sending it back to ${req.builder.name}.`,
+          text: wasAlreadyFailing(baseline)
+            ? `not publishing: ${checks.summary} — and it was already failing on ${base} ` +
+              `(exit ${baseline?.code}). Sending it back to ${req.builder.name} with that said, ` +
+              'so it fixes its own work rather than the baseline.'
+            : `not publishing: ${checks.summary}. Sending it back to ${req.builder.name}.`,
         });
         continue;
       }
@@ -321,7 +446,12 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
 
         if (onBranch.send === 'human') {
           await finishTask(req.pool, buildTaskId, 'failed');
-          emit({ kind: 'note', text: 'the builder changed nothing, and the branch is empty' });
+          emit({
+            kind: 'note',
+            text: spawnedProducer
+              ? 'the builder changed nothing, and the branch is empty'
+              : 'no producer ran this attempt, and the branch is empty',
+          });
           state = transition(state, 'human_requested');
           return {
             state,
@@ -333,7 +463,7 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
           };
         }
 
-        await finishTask(req.pool, buildTaskId, 'succeeded');
+        await finishTask(req.pool, buildTaskId, spawnedProducer ? 'succeeded' : 'cancelled');
         emit({
           kind: 'note',
           text:
@@ -397,6 +527,8 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
     });
 
     const review = await reviewBranch({
+      ...(plan.survey?.install === undefined ? {} : { install: plan.survey.install }),
+      ...(baseline === undefined ? {} : { baseline }),
       pool: req.pool,
       repoDir: req.repoDir,
       checkCommand: req.checkCommand,
@@ -506,7 +638,33 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
     }
 
     /* --------------------------------------------------------------- fix */
-    const wantsFix = v.submission.action === 'fix';
+    //
+    // Who can settle what was found, which is not the same question as what the
+    // reviewer would prefer to do about it.
+    //
+    // A reviewer may report a finding no edit can address — "I could not
+    // establish this from what I was given" — and still ask for it to be sent
+    // back. Honouring that buys a builder pass that reads the code, concludes
+    // correctly that there is nothing to write, and stops; that happened, cost
+    // $2.86, and left a human holding a green branch with no pull request. So
+    // the reviewer chooses between fixing and returning, and the platform
+    // decides who is even able to act.
+    const foundThis: Finding[] = [
+      ...v.submission.criteria.flatMap((c) => (c.finding === undefined ? [] : [c.finding])),
+      ...v.submission.extraFindings,
+    ];
+    const settles = whoSettles(foundThis);
+
+    const wantsFix = v.submission.action === 'fix' || settles === 'fixer' || producerDeclined;
+    if (settles === 'fixer' && v.submission.action !== 'fix') {
+      emit({
+        kind: 'note',
+        text:
+          `${chosen.agentId} asked to send it back, but nothing it found is a code defect — ` +
+          'no edit would settle it. Giving it to the fix task, which can write and can run ' +
+          "the project's own tools.",
+      });
+    }
     if (wantsFix && fixRole === undefined) {
       emit({
         kind: 'note',
@@ -627,6 +785,7 @@ export async function buildApprovedPlan(req: BuildRequest): Promise<BuildOutcome
       ...v.submission.criteria.filter((c) => c.status === 'not_met'),
       ...v.submission.extraFindings.map((f) => ({ index: -1, status: 'not_met', finding: f })),
     ];
+    priorFindingList = foundThis;
   }
 
   return {
@@ -667,6 +826,25 @@ export interface ReviewArgs {
   readonly pool: Pool;
   readonly repoDir: string;
   readonly checkCommand: readonly string[];
+  /**
+   * How to install this repository's dependencies, from the plan's survey.
+   *
+   * Flat, like everything else here, and optional because a review can be run
+   * on its own against a branch with no plan behind it. When it is present the
+   * worktree is prepared before the reviewer sees it — a verify task holds no
+   * write grant and cannot install anything itself, which is how a reviewer
+   * ends up reporting that it lacks the tools to judge a criterion.
+   */
+  readonly install?: string;
+  /**
+   * What the gate said about the base, when it has been measured.
+   *
+   * The reviewer is handed this rather than asked to find it. Asking is how
+   * criterion [19] became unanswerable: a verify task cannot install the tools
+   * it would need, so "I could not establish the before-state" was the only
+   * honest answer available to it.
+   */
+  readonly baseline?: Baseline;
   readonly reviewer: {
     readonly runtime: AgentRuntime;
     readonly role: RoleDefinition;
@@ -708,6 +886,19 @@ export async function reviewBranch(
     detached: true,
   });
 
+  /*
+   * The one that matters most.
+   *
+   * A verify task holds no write grant and runs under an operating-system
+   * sandbox, so it cannot install anything for itself. On 30 October that meant
+   * a reviewer reporting "this review checkout also lacks node_modules/.bin/tsc
+   * and node_modules/.bin/eslint" and marking a criterion unmet for want of the
+   * tools — a finding no producer could act on, which then bought a builder
+   * pass that wrote nothing.
+   */
+  const ready = await installDependencies(wt, a.install);
+  if (ready.summary !== undefined) a.emit({ kind: 'note', text: ready.summary });
+
   let verdict: AcceptedVerdict | undefined;
   let spend = { tokensIn: 0, tokensOut: 0, usd: 0 };
   let usd = 0;
@@ -747,6 +938,8 @@ export async function reviewBranch(
         attempt: a.attempt,
         diff: a.diff,
         checkResults: { ok: a.checks.ok, summary: a.checks.summary, output: a.checks.output },
+        // The before-state, handed over rather than asked for.
+        ...(a.baseline === undefined ? {} : { baseline: a.baseline }),
         // The reviewer sees the plan so it can catch work the plan said was out
         // of scope. It does not see the original request: the criteria are the
         // standard, and a reviewer with two standards has none.
@@ -813,6 +1006,27 @@ export async function reviewBranch(
     usd,
     ...(error === undefined ? {} : { error }),
   };
+}
+
+/**
+ * What a producer pass would be working on, as one value.
+ *
+ * A pass is defined by the commit it starts from and the findings it is handed.
+ * If both repeat, so will the outcome — the same agent, the same code, the same
+ * instructions — so buying it again buys the same nothing. Caps alone do not
+ * save you here: the loop simply spends all three attempts arriving at the same
+ * place.
+ *
+ * Deliberately not the whole finding: severity and line numbers move while the
+ * substance stays, and this question is "have I already asked for this?", not
+ * "is this byte-identical?".
+ */
+export function passKey(headSha: string, findings: readonly Finding[]): string {
+  const substance = findings
+    .map((f) => `${f.kind}\u0000${f.file ?? ''}\u0000${f.claim}`)
+    .sort()
+    .join('\u0001');
+  return createHash('sha256').update(`${headSha}\u0002${substance}`).digest('hex').slice(0, 32);
 }
 
 /**
@@ -910,6 +1124,12 @@ async function applyReviewerFix(a: FixArgs): Promise<FixResult> {
     identity: agentIdentity(req.reviewer.name, req.reviewer.role.id, modelOf(req.reviewer.role)),
     claimedBranches: [a.branch],
   });
+
+  // A fix task can install for itself, and on forge-sandbox one spent about
+  // forty seconds failing to — `npm install --offline`, then
+  // `--no-package-lock`, then `--fetch-retries=0` — before giving up.
+  const ready = await installDependencies(wt, req.plan.survey?.install);
+  if (ready.summary !== undefined) a.emit({ kind: 'note', text: ready.summary });
 
   let usd = 0;
   let summary: string | undefined;

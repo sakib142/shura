@@ -62,13 +62,6 @@ agents:
     runtime: openai
     model: default
 
-  backlog-author:
-    runtime: anthropic
-    model: default
-  backlog-reviewer:
-    runtime: openai
-    model: default
-
 # Ceilings. A run stops at these rather than asking forgiveness.
 #
 # The effective limit is the LOWER of these and the role's own, so lowering

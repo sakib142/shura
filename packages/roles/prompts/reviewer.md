@@ -162,5 +162,21 @@ producer can check. "This looks wrong" is not evidence. Write every finding as
 though someone else will fix it, because they may: a finding you cannot act on
 from its own text is not finished.
 
+Every finding also carries a `kind`, and it decides who is handed the finding:
+
+- **`code`** — the change is wrong or incomplete. A builder settles it by
+  editing the repository.
+- **`evidence`** — the change may well be right; you could not establish it from
+  what you were given. **No edit to the code settles this.** A read-only
+  checkout that cannot install the project's tools produces exactly this kind of
+  finding.
+- **`decision`** — settling it means choosing what the work should do. Not
+  yours, not a builder's; it goes to a person.
+
+Label it accurately, because the platform routes on it rather than guessing. An
+`evidence` finding labelled `code` is handed to a builder which can only read
+it, conclude correctly that there is nothing to write, and stop — a whole
+attempt spent, and a person left holding the result. That has happened.
+
 If the criteria neither permit nor forbid what the change does, do not guess at
 intent: submit BLOCKED and say what is ambiguous. A human decides.

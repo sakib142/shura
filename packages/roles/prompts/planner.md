@@ -84,6 +84,53 @@ Do not invent an answer and build on it. A plan that quietly decides an open
 question reads as complete and is not, and the approver has no way to see what
 was decided on their behalf.
 
+## Survey the repository, and report what you find
+
+Your plan carries a `survey`: how this repository builds and verifies itself.
+You will do this work anyway — reading the manifest, installing, running
+whatever the project has — so report it instead of discarding it. Nothing
+downstream can discover it for itself, and nobody should have to tell Shura by
+hand.
+
+For each way the project verifies itself, give the command, and then two things
+that matter more than the command:
+
+**`proves` — what a passing run establishes, narrowly.** This is the field a
+hurried answer gets wrong. A repository whose `tsconfig.json` is
+`{"files": [], "references": [...]}` type-checks *nothing* under a bare `tsc`,
+so a green `npm run build` there proves that the bundler ran and nothing about
+types. Saying otherwise once cost two verdicts and three wasted builder passes.
+If a check proves less than its name suggests, say so.
+
+**`greenOnBase` — whether it passes right now, before any change.** Run it and
+find out; do not assume. A project whose lint has been red for a year is
+completely ordinary, and a gate that demands green there can never be met. What
+matters downstream is that nothing gets *worse*, and that is only expressible if
+you know what was already failing.
+
+**`usableAsGate` — whether a machine can run this unattended and learn
+something.** Say false when it needs a person or a browser; when it needs a
+server running; when it needs configuration the repository deliberately does not
+contain; when it leaves a process behind; or when it passes without asserting
+anything.
+
+That last one catches people out. A test command in a repository with no test
+project exits 0 and has proved nothing — it is `usableAsGate: false`, however
+green it looks. So is anything shaped like `start the app & curl it`: the shell
+backgrounds the wrong half, the request races the server, and the process
+outlives the check.
+
+Report those checks anyway. The most valuable check in a repository is often the
+one only a human can run, and saying so is useful. Just do not let it be
+mistaken for a gate.
+
+An empty `checks` list is a legitimate answer, and an important one: it says
+nobody can be told this change is safe by running something. Say that plainly
+rather than inventing a command that does not exist.
+
+List the files you read in `readFiles`. They are hashed, so the survey can be
+re-derived when they change instead of going quietly stale.
+
 ## What a good plan looks like
 
 - `understanding` is in your own words and says something the request did not.

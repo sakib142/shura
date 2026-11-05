@@ -15,9 +15,7 @@ import { loadAllRoles } from '@shura/roles';
 import { smoke } from './smoke.js';
 import { run } from './run.js';
 import { probe } from './probe.js';
-import { submit } from './submit.js';
 import { init } from './init.js';
-import { design } from './design.js';
 import { watch } from './watch.js';
 import { build } from './build.js';
 import { serve } from './serve.js';
@@ -154,9 +152,7 @@ async function dispatch(): Promise<number> {
     case 'smoke': return smoke(rest[0]);
     case 'run': return run(rest);
     case 'probe': return probe(rest);
-    case 'submit': return submit(rest);
     case 'init': return init(rest);
-    case 'design': return design(rest);
     case 'watch': return watch(rest);
     case 'serve': return serve(rest);
     case 'build': return build(rest);
@@ -181,9 +177,7 @@ async function dispatch(): Promise<number> {
           '',
           '  try planner|builder|reviewer   run one agent alone, to see what it does',
           '',
-          '  submit <file.md>           define a work item and its acceptance criteria',
           '  run <ITEM> [--role R]      build it, review it, merge it',
-          '  design <extract.json>      a design in, a verified backlog out',
           '  watch [--port=7777]        read-only live view; serve is this plus submitting work',
           '  probe [CASE]               measure whether the reviewer catches seeded faults',
           '  smoke [vendor]             one real round-trip per vendor',

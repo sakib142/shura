@@ -18,6 +18,7 @@ import { nullsAsAbsent } from './tools.js';
 import {
   CRITERION_STATUSES,
   DECISIONS,
+  FINDING_KINDS,
   REVIEWER_ACTIONS,
   SEVERITIES,
   VENDORS,
@@ -32,8 +33,47 @@ export const FindingSchema = z.object({
   claim: z.string().min(1),
   /** Why the verifier believes it — the part a producer can check. */
   evidence: z.string().min(1),
+  /**
+   * Who can settle it. See FINDING_KINDS.
+   *
+   * Defaults to 'code' because that is what every finding was treated as
+   * before this existed: an unlabelled finding behaves exactly as it used to,
+   * so a verifier that ignores the field costs nothing new.
+   */
+  kind: z
+    .enum(FINDING_KINDS)
+    .default('code')
+    .describe(
+      'Who can settle this. "code" — a producer can fix it by editing the repository. ' +
+        '"evidence" — the change may be right but you could not establish it from what you ' +
+        'were given; no edit to the code will settle it. "decision" — settling it means ' +
+        'choosing what the work should do, which is a person\'s call. Be accurate: an ' +
+        '"evidence" finding labelled "code" is handed to a builder that can only read it, ' +
+        'conclude there is nothing to write, and stop',
+    ),
 });
 export type Finding = z.infer<typeof FindingSchema>;
+
+/**
+ * Who should be given a set of findings.
+ *
+ * 'producer' — at least one finding is a code defect, which is work a builder
+ *              can do. Any evidence findings ride along and are re-judged after.
+ * 'fixer'    — nothing to edit, but something to establish. A fix task runs
+ *              with write access and can install the project's own tools, which
+ *              is exactly what a read-only verify task could not do.
+ * 'human'    — a decision is wanted, or there is nothing to act on at all.
+ *
+ * Empty is 'human' deliberately: a rejection carrying no finding is a contract
+ * nobody can act on, and quietly handing that to a producer is how the loop
+ * used to spend its cap discovering there was nothing to do.
+ */
+export function whoSettles(findings: readonly Finding[]): 'producer' | 'fixer' | 'human' {
+  if (findings.length === 0) return 'human';
+  if (findings.some((f) => f.kind === 'code')) return 'producer';
+  if (findings.some((f) => f.kind === 'evidence')) return 'fixer';
+  return 'human';
+}
 
 export const CriterionVerdictSchema = z
   .object({

@@ -116,5 +116,27 @@ export function userPrompt(req: RunRequest): string {
   if (context.checkResults !== undefined) {
     parts.push(`Check results:\n${JSON.stringify(context.checkResults, null, 2)}`);
   }
+  /*
+   * The before-state, stated rather than left to be discovered.
+   *
+   * Without this a verifier has to establish what the checks said before the
+   * change, and it cannot: a verify task holds no write grant and runs under an
+   * operating-system sandbox, so it cannot install the tools. One did exactly
+   * that on 30 October, reported that it lacked them, and marked a criterion
+   * unmet for want of evidence the harness already had.
+   *
+   * The framing is deliberate. A failure present here is not evidence against
+   * the change, and saying so plainly stops a reviewer treating a long-broken
+   * lint run as a defect in work that never touched it.
+   */
+  if (context.baseline !== undefined) {
+    parts.push(
+      'What these checks said on the base branch, BEFORE this change:\n' +
+        `${JSON.stringify(context.baseline, null, 2)}\n\n` +
+        'Anything already failing there is not caused by this change and is not evidence ' +
+        'against it. What matters is whether this change made something worse. You do not ' +
+        'need to re-establish any of this — it was measured for you.',
+    );
+  }
   return parts.join('\n\n');
 }

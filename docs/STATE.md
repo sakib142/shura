@@ -1,4 +1,4 @@
-# Where Shura stands — 24 October 2026
+# Where Shura stands — 5 November 2026
 
 A handover note. What works, what is proven, what is not, and what to do next.
 
@@ -16,7 +16,10 @@ a human merging at the end. The reviewer always runs a different vendor's model
 from the builder, and that is enforced in code rather than asked for in a
 prompt. All of it has now run end to end against a real repository.
 
-**457 tests pass.** Working tree clean as of commit `cb11d41`.
+**522 tests pass.** Working tree clean as of commit `e23e9d5`, on branch
+`phase-1-no-dead-passes`. See *What changed, 31 October to 5 November* below —
+the sections above it describe the platform as it was on 24 October and are
+still accurate about the loop, the rules and the CLI pivot.
 
 ---
 
@@ -122,16 +125,31 @@ and `backend-developer` had **identical grants**, `backend-developer`'s prompt
 contained nothing backend-specific, and backend could neither plan nor review.
 
 The test for whether something deserves its own role is **grants, not subject
-matter**. `backlog-author` holds `[tracker.read, docs.read, backlog.propose]`
-and cannot touch a repository, so it stays separate. Frontend and backend
-builders had the same grants, so they merged.
+matter**. Frontend and backend builders had the same grants, so they merged.
 
-### Still outside that model
+### What was removed, on 31 October
 
-`backlog-author`, `backlog-reviewer`, `design-analyst` work on tickets and
-designs rather than code. `merge-queue` is `kind: admit` — deterministic code
-carrying no model, by rule 3. **None has run on the CLI path.** Parked, not
-abandoned.
+Four roles shipped that had never run against a repository — `backlog-author`,
+`backlog-reviewer`, `design-analyst` and `merge-queue` — along with the flows
+built to drive them: the `design` command, `design-to-backlog.ts`, the Figma
+port and connector, `shura submit`, and the `target-ui` fixture.
+`design-to-backlog.ts` had no tests at all.
+
+They were parked for weeks and the parking had a cost: untested code in the
+tree reads as capability, and every one of them had to be explained to anybody
+reading the role list. A foundation has to be small enough to be strong.
+
+`merge-queue` going needs one note. It was the only `admit` actor, so rule 3
+has no shipped role to point at any more — but the property is unchanged and
+still enforced where it counts: `parseRole` rejects an admit role carrying a
+model, and the database refuses the row (`admit_actors_carry_no_model`). The
+merge commit's git identity in `shura run` is a hardcoded
+`agentIdentity('merge-queue', 'admit', 'deterministic')` in the connectors, not
+a role lookup, so that path still works.
+
+Kept deliberately, because tests cover them: `shura run`, the `MergeQueue` port
+with both implementations, `admit` in the vocabulary, and `shura probe` — which
+`LocalVcs` exists for.
 
 ### The four rules
 
@@ -164,30 +182,103 @@ metered API. `describeSpend` renders it as `of quota, not billed
 
 ---
 
+## What changed, 31 October to 5 November
+
+Eleven commits on `phase-1-no-dead-passes`, none pushed as of this writing. Each
+one exists because a live run exposed something; the commit messages name the
+run. In order:
+
+**The whole flow completed cleanly, twice.** `forge-sandbox` PR #2 (reviewer
+fixed its own finding) and PR #3 — one builder pass, PASS on the first review,
+`awaiting_admission`. Before this week every run ended in an escalation or a
+wasted pass.
+
+**Pruned to three positions.** `backlog-author`, `backlog-reviewer`,
+`design-analyst` and `merge-queue` are gone, with the `design` command,
+`design-to-backlog.ts` (which had no tests at all), the Figma port and
+connector, `shura submit`, and the `target-ui` fixture — 1,221 lines. `shura
+run`, the `MergeQueue` port and `admit` stay: they are covered by tests in four
+files, and `shura probe` needs `LocalVcs`. Rule 3 now has no shipped role to
+point at; it is still enforced by `parseRole` and by the database constraint.
+
+**No pass is bought that cannot produce anything.** The builder is pre-flighted
+rather than checked afterwards; findings carry `kind: code | evidence |
+decision` and are routed to whoever can act on them; and `passKey` refuses to
+ask the same producer the same question twice. Measured: a resume whose branch
+already carried the work spent **zero** builder passes, against one pass and
+~8 minutes before.
+
+**`shura build --here` works with no token at all.** `CheckoutVcs` drives the
+developer's own checkout — verified with `GITHUB_TOKEN` emptied — and leaves the
+working tree, index and current branch byte-identical. Pull requests go through
+a `HostCli` adapter (`gh` today).
+
+**The repository says how it verifies itself.** A plan now carries a `survey`:
+the install command, and per check the command, **what a pass proves**, whether
+it is **green on the base**, and whether it is **usable as a gate** at all.
+`--checks` is a fallback rather than a prerequisite. Proven on a C# repository
+the platform knows nothing about: it found `dotnet build ShamalAI.Api.sln`
+unaided, measured it, and reported that `dotnet test` there "exits 0 having
+discovered and run zero tests. Vacuous green — must not be cited as evidence".
+
+**Dependencies are installed before an agent is handed the worktree**, and the
+base is measured once per plan (`plans.baseline`). Together these remove the
+reason criterion [19] was unanswerable: a verify task cannot install tools, and
+nothing captured a before-state. The reviewer is now handed both.
+
+### What every live run taught that the tests could not
+
+Six bugs this week were found by running it and none by the suite: a false
+"predates" warning, two contradictory gate messages, a gate that would have
+strung a backgrounded server into a `&&` chain, a vacuously-green check treated
+as a gate, a task row that recorded a pass which never ran, and a baseline that
+typechecked its way through to an agent that never received it (object spreads
+bypass excess-property checking — the link that matters is in `prompt.ts`).
+
 ## What has never run
 
-- **The whole flow on a repository that is not forge-sandbox.** One repo, 12
-  files, is not a sample.
 - **`--domain backend`.** The overlay was written from scratch and has never
   reached a model.
-- **A reviewer sending work back** rather than fixing it. The `return` path and
-  the rework loop are untested live.
-- **`shura probe`** since being rewired onto `reviewBranch`. It measures catch
-  rate against seeded faults and is how you would know whether the reviewer is
-  genuinely good or merely agreeable.
-- **The non-code agents** — backlog, design.
+- **A reviewer sending work back** rather than fixing it. Now less likely still:
+  the prompt prefers `fix`, and the platform overrides a `return` whose findings
+  no edit could settle.
+- **`shura probe`** since being rewired onto `reviewBranch`.
+- **A build on a repository that is not forge-sandbox.** Plans have been made
+  against courtshare and a C# API; only forge-sandbox has been built end to end.
+- ~~The non-code agents~~ — removed on 31 October rather than left parked.
+- ~~The whole flow on a repository that is not forge-sandbox~~ — planning is
+  proven on two others.
 
 ---
 
 ## Known issues
 
-**This directory is inside OneDrive, which resurrects deleted files.** On 24
-October, every file deleted in commit `081e7c8` was back on disk as untracked —
-the old role YAMLs, the old API runtimes, and `eval/designs/edb-news-section.json`,
-the client data deliberately stripped from git history. Two tests failed
-because `loadAllRoles()` read twelve roles instead of seven. **Check
-`git status` after any gap in work.** `eval/designs/` is now gitignored so it
-cannot be committed back by accident, but the rest will return.
+**This directory is inside OneDrive, which resurrects deleted files.** It has
+now done so four times, and it gets worse each time rather than settling:
+
+| when | what came back |
+| --- | --- |
+| 24 Oct | everything deleted in `081e7c8`; `loadAllRoles()` read twelve roles instead of seven and two tests failed |
+| 29 Oct | the same 21 files, archived to `~/.shura-archive/2026-10-27-onedrive-resurrected/` |
+| 31 Oct | — |
+| 5 Nov | **43 files** — both earlier batches plus everything the 31 October prune deleted. Twelve role YAMLs on disk where three belong |
+
+Every occurrence is identifiable rather than guessed at: a resurrected file has
+mode `-rwx------@` and an old mtime, while live files are `-rw-r--r--`. All of
+them are recoverable — from git history, or from the archive for the three that
+were never committed (`frontend-planner.yaml`, `frontend-reviewer.yaml`,
+`caching.test.ts`).
+
+**Run `git status` before anything else after a gap in work.** A clean-looking
+checkout with twelve roles in it will fail `doctor` and the suite for reasons
+that have nothing to do with the code.
+
+This is the strongest argument for moving the repository out of a sync root
+entirely. The clone cache has the same problem for a different reason: a private
+repository's full history sits in `<project>/.shura/<repo>.git`, inside
+OneDrive, which is a privacy issue as much as a correctness one. Phase 6 of the
+plan moves it to `~/.cache/shura`; moving the working copy is a decision for
+whoever owns the machine.
 
 **The audit chain carries 21 historical breaks**, all at `id <= 204`, from a
 concurrency bug fixed in migration `0010`. Everything recorded since is intact.
@@ -234,14 +325,24 @@ found them.
 
 ## What I would do next
 
-1. **`shura probe`** — the cheapest way to learn whether the reviewer is good
-   or just agreeable. It passed 7/7 on a demanding spec, which could be either.
-2. **A second repository**, ideally with `--domain backend`, to find what is
-   specific to forge-sandbox.
-3. **Make the reviewer return rather than fix**, once, to exercise the rework
-   loop.
-4. **Prompt caching on the codex side** — the claude side has it; codex usage
-   showed 30k of 36k tokens served from cache already, so check before
-   building.
-5. **Decide about the non-code agents** — fold in, or delete. They have never
-   run on this path and are currently dead weight in `loadAllRoles()`.
+The full plan is at `~/.claude/plans/now-as-we-did-tidy-candle.md`, which is
+outside this repository and will not survive a clean machine — worth copying in
+before it matters. Phases 1, 2 and 3 are done, Phase 4 is half done.
+
+1. **Finish Phase 4.** A checker per criterion, enforced by the schema, so a
+   criterion the pipeline cannot settle becomes impossible to write rather than
+   merely answerable — criterion [19] is the case it prevents. Then an evidence
+   channel on the verdict, so nothing is written into a target repository again.
+2. **Push `phase-1-no-dead-passes` and open a pull request.** Eleven commits,
+   unpushed. PR #1 on `sakib142/shura` carries the four earlier ones and should
+   probably merge first.
+3. **Build on a repository that is not forge-sandbox.** Planning is proven on
+   courtshare and on a C# API; building is not.
+4. **`shura probe`** — still the cheapest way to learn whether the reviewer is
+   good or merely agreeable.
+5. **Prompt caching on the codex side** — the claude side has it; codex reported
+   12,288 of 17,717 tokens served from cache, so measure before building.
+6. **Normalise usage reporting.** `tokensIn` excludes cache reads on one adapter
+   and includes them on the other, and `usd` is a would-have-cost on one and a
+   deliberate `0` on the other. The figure a run prints cannot be summed, which
+   is why this document counts passes and minutes.

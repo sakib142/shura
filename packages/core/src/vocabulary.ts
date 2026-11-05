@@ -73,4 +73,27 @@ export const VERIFIER_OUTPUT_TOOL = 'verdict.submit';
 export const REVIEWER_ACTIONS = ['fix', 'return'] as const;
 export type ReviewerAction = (typeof REVIEWER_ACTIONS)[number];
 
+/**
+ * What kind of problem a finding is, which decides who can settle it.
+ *
+ * 'code'     — the change itself is wrong or missing something. A producer can
+ *              fix it by editing the repository.
+ * 'evidence' — the change may well be right, but the verifier could not
+ *              establish it from what it was given. Nobody can settle this by
+ *              editing code; it needs the evidence gathering that a verify task
+ *              could not do, because it holds no write grant and cannot install
+ *              a project's own tools.
+ * 'decision' — settling it requires choosing what the work should do. That is
+ *              not a producer's call and not a verifier's; it is a person's.
+ *
+ * The distinction is load-bearing, not descriptive. Without it every finding
+ * went to the builder, and a verifier reporting "I could not install the tools
+ * to check this" bought a full builder pass that read the code, concluded
+ * correctly that there was nothing to write, and ended with a human holding a
+ * green branch and no pull request. Routing on this is what stops the platform
+ * paying an agent to discover that a finding was never addressed to it.
+ */
+export const FINDING_KINDS = ['code', 'evidence', 'decision'] as const;
+export type FindingKind = (typeof FINDING_KINDS)[number];
+
 /* The catalog, its argument schemas and ToolName live in schemas/tools.ts. */

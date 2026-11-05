@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { VerdictRejected, acceptVerdict, resolveDecision } from './verdict.js';
+import { VerdictRejected, acceptVerdict, resolveDecision, whoSettles } from './verdict.js';
 
 const base = {
   artifactId: 'a_7f3c',
@@ -202,5 +202,56 @@ describe('a verdict that says "not supplied" with null', () => {
       1,
     );
     expect(v.submission.extraFindings).toEqual([]);
+  });
+});
+
+/*
+ * Who a finding is addressed to.
+ *
+ * On 30 October a reviewer reported, correctly, that it could not establish one
+ * criterion: it runs read-only and could not install the project's tools to run
+ * them. The finding went to the builder, which read the code, concluded there
+ * was nothing to write, wrote nothing, and the run ended with a person holding
+ * a green branch and no pull request. $2.86 to learn the finding had never been
+ * addressed to a builder at all.
+ */
+describe('who can settle a finding', () => {
+  const of = (kind: 'code' | 'evidence' | 'decision') => ({ ...blocker, kind });
+
+  it('sends code defects to the producer', () => {
+    expect(whoSettles([of('code')])).toBe('producer');
+  });
+
+  it('sends an evidence gap to the fixer, which can write and run the tools', () => {
+    expect(whoSettles([of('evidence')])).toBe('fixer');
+  });
+
+  it('sends a decision to a person', () => {
+    expect(whoSettles([of('decision')])).toBe('human');
+  });
+
+  // One actionable defect is enough to make the pass worth buying; the evidence
+  // gap rides along and is judged again afterwards.
+  it('prefers the producer when anything at all is editable', () => {
+    expect(whoSettles([of('evidence'), of('code'), of('decision')])).toBe('producer');
+  });
+
+  // A rejection carrying nothing is a contract no agent can act on. Handing it
+  // to a producer is how the loop used to spend its cap finding that out.
+  it('sends an empty set to a person rather than to a producer', () => {
+    expect(whoSettles([])).toBe('human');
+  });
+
+  // A verifier that ignores the field must behave exactly as it did before the
+  // field existed, or adding it would change every run that predates it.
+  it('treats an unlabelled finding as a code defect', () => {
+    const v = acceptVerdict({
+      ...base,
+      decision: 'CHANGES_REQUESTED',
+      criteria: [{ index: 0, status: 'not_met', finding: blocker }],
+      extraFindings: [],
+    }, 1);
+    expect(v.submission.criteria[0]?.finding?.kind).toBe('code');
+    expect(whoSettles([v.submission.criteria[0]!.finding!])).toBe('producer');
   });
 });

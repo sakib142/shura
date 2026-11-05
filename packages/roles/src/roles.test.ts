@@ -5,16 +5,21 @@ import { availableDomains, loadAllRoles, withPrompt } from './index.js';
 const roles = loadAllRoles();
 
 describe('the shipped role definitions', () => {
-  it('all load and satisfy the invariant', () => {
-    expect([...roles.keys()].sort()).toEqual([
-      'backlog-author',
-      'backlog-reviewer',
-      'builder',
-      'design-analyst',
-      'merge-queue',
-      'planner',
-      'reviewer',
-    ]);
+  /*
+   * Three, and the list is asserted rather than counted.
+   *
+   * Four more shipped once — backlog-author, backlog-reviewer, design-analyst
+   * and merge-queue — and none had ever run against a repository. They went,
+   * with the flows built to drive them, because a foundation has to be small
+   * enough to be strong: untested code in the tree reads as capability, and
+   * every one of them had to be explained to anybody reading the role list.
+   *
+   * `reviewer:fix` is deliberately absent here. It is not a file — fixRoleOf()
+   * derives it from the reviewer's own `fix:` block, and the id lookup must
+   * never return it as something to schedule.
+   */
+  it('are the three positions, and nothing else', () => {
+    expect([...roles.keys()].sort()).toEqual(['builder', 'planner', 'reviewer']);
   });
 
   it('grant only tools the platform knows', () => {
@@ -30,19 +35,25 @@ describe('the shipped role definitions', () => {
     }
   });
 
-  // Rule 3, as shipped: the thing that merges is not a model.
-  it('leave the admit role without a model', () => {
-    const mq = roles.get('merge-queue')!;
-    expect(mq.kind).toBe('admit');
-    expect(mq.model).toBeUndefined();
+  /*
+   * Rule 3 no longer has a shipped role to assert it against: merge-queue was
+   * the only `admit` actor and it had never run. The property itself is
+   * unchanged and still enforced in two places that are tested —
+   * `parseRole` rejects an admit role carrying a model (role.test.ts), and the
+   * database refuses the row outright (db.test.ts's
+   * `admit_actors_carry_no_model`). What is asserted here instead is the
+   * consequence: nothing shipped admits anything, because in this flow
+   * admission is a person merging a pull request.
+   */
+  it('ship no actor that admits anything', () => {
+    for (const role of roles.values()) expect(role.kind).not.toBe('admit');
   });
 
   // Rule 1, as shipped: a producer and its default verifier must be able to pair.
   it('pair each producer with a verifier on a different vendor', () => {
     const pairs: Array<[string, string]> = [
       ['builder', 'reviewer'],
-      ['backlog-author', 'backlog-reviewer'],
-      ['design-analyst', 'backlog-reviewer'],
+      ['planner', 'reviewer'],
     ];
     for (const [p, v] of pairs) {
       const producer = roles.get(p)!;
@@ -51,19 +62,35 @@ describe('the shipped role definitions', () => {
     }
   });
 
-  // A fallback that lands on the producer's vendor would defeat rule 1 silently
-  // at the exact moment the primary is rate-limited.
+  /*
+   * A fallback that lands on the producer's vendor would defeat rule 1 silently
+   * at the exact moment the primary is rate-limited — which is the worst moment
+   * for a guarantee to become a coincidence.
+   */
   it('never let a verifier fall back onto its producer vendor', () => {
-    const pairs: Array<[string, string]> = [
-      ['builder', 'reviewer'],
-      ['backlog-author', 'backlog-reviewer'],
-    ];
-    for (const [p, v] of pairs) {
+    for (const [p, v] of [['builder', 'reviewer']] as Array<[string, string]>) {
       const producerVendor = roles.get(p)!.model!.runtime;
       const fallback = roles.get(v)!.model?.fallback;
       if (fallback === undefined) continue;
       expect(fallback.split('/')[0]).not.toBe(producerVendor);
     }
+  });
+
+  /*
+   * The reviewer's fix capability is the one place a verifier's identity gets a
+   * write grant, so it is worth asserting it exists and stays a separate role
+   * rather than widening the verify role's own grants.
+   */
+  it('derive a fix role from the reviewer without widening the reviewer', () => {
+    const reviewer = roles.get('reviewer')!;
+    expect(reviewer.tools).not.toContain('repo.write');
+
+    const fix = fixRoleOf(reviewer)!;
+    expect(fix.id).toBe('reviewer:fix');
+    expect(fix.kind).toBe('produce');
+    expect(fix.tools).toContain('repo.write');
+    // Same vendor as the reviewer, because it is the reviewer's own correction.
+    expect(fix.model?.runtime).toBe(reviewer.model?.runtime);
   });
 });
 
